@@ -15,6 +15,7 @@ let redacting = false;
 let redactionStart;
 let annotationMode;
 let annotationStart;
+let highlightJustBaked = false;
 
 function status(message, error = false) {
   ui.status.textContent = message;
@@ -359,7 +360,7 @@ function chooseAnnotation(kind) {
   const button = kind === "marker" ? ui.marker : kind === "callout" ? ui.callout : ui.highlight;
   button.classList.add("active");
   ui.image.style.cursor = kind === "highlight" ? "crosshair" : "copy";
-  ui.annotationHint.textContent = kind === "highlight" ? "Drag over the area to highlight. Press Esc to cancel." : "Click the part of the screenshot this annotation should explain. Press Esc to cancel.";
+  ui.annotationHint.textContent = kind === "highlight" ? "Drag over the area to highlight, or click for a default highlight. Press Esc to cancel." : "Click the part of the screenshot this annotation should explain. Press Esc to cancel.";
 }
 ui.marker.addEventListener("click", () => chooseAnnotation("marker"));
 ui.callout.addEventListener("click", () => chooseAnnotation("callout"));
@@ -379,10 +380,16 @@ ui.image.addEventListener("pointerup", (event) => {
   if (kind === "highlight") {
     const area = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) };
     if (area.width < 0.03 || area.height < 0.03) { status("Drag across a larger area to create a highlight.", true); return; }
+    highlightJustBaked = true;
+    setTimeout(() => { highlightJustBaked = false; }, 0);
     bakeAnnotation(kind, area);
   } else {
     bakeAnnotation(kind, end);
   }
+});
+ui.image.addEventListener("click", () => {
+  if (annotationMode !== "highlight" || highlightJustBaked) return;
+  bakeAnnotation("highlight", { x: 0.5, y: 0.45, width: 0.28, height: 0.22 });
 });
 
 ui.redact.addEventListener("click", () => {
