@@ -73,6 +73,9 @@ li button[aria-current="step"] { border-color: var(--accent); }
 .redaction-hint { position: absolute; z-index: 3; top: 22px; left: 22px; padding: 6px 9px; border-radius: 6px; color: #15200e; background: var(--accent); font-size: 12px; font-weight: 700; }
 .button.active { border-color: var(--accent); color: var(--accent); }
 .script { padding: 16px; }
+.annotation-tools { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 3px 0 14px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #141925; }
+.tool-label { color: var(--muted); font-size: 12px; font-weight: 750; margin-right: 3px; }
+.annotation-tools .button { padding: 7px 10px; font-size: 12px; }
 .label-row, .script-actions, .result-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .label-row span, .hint { color: var(--muted); font-size: 12px; }
 label { display: block; font-weight: 700; margin-bottom: 8px; }

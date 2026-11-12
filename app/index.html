@@ -45,6 +45,12 @@
         <div class="script">
           <div class="label-row"><label for="narration">Viewer instruction &amp; narration</label><span id="charCount">0 / 400</span></div>
           <textarea id="narration" maxlength="400" rows="3" placeholder="Tell the viewer what to do, for example: Click Settings, then choose Billing."></textarea>
+          <div class="annotation-tools" aria-label="Visual teaching tools">
+            <span class="tool-label">Teach visually</span>
+            <button id="marker" class="button">Add marker</button>
+            <button id="callout" class="button">Add callout</button>
+            <button id="highlight" class="button">Highlight area</button>
+          </div>
           <div class="script-actions"><div><button id="preview">Play narration</button><button id="redact" class="button">Redact pixels</button></div><span class="hint">Blank lines become silent scenes</span></div>
         </div>
       </div>

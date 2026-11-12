@@ -1,7 +1,7 @@
 const get = (id) => document.getElementById(id);
 const ui = Object.fromEntries(
   ["voice", "saveState", "title", "instructions", "open", "openProject", "file", "projectFile", "export", "download", "saveProject",
-   "status", "workspace", "count", "steps", "image", "sceneTitle", "narration", "charCount", "preview", "redact", "redactionHint", "redactionCanvas", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove"]
+   "status", "workspace", "count", "steps", "image", "sceneTitle", "narration", "charCount", "preview", "redact", "marker", "callout", "highlight", "redactionHint", "redactionCanvas", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove"]
     .map((id) => [id, get(id)]),
 );
 let guide;
@@ -289,6 +289,48 @@ ui.copyGuide.addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(text); ui.copyGuide.textContent = "Copied"; setTimeout(() => { ui.copyGuide.textContent = "Copy guide text"; }, 1600); }
   catch (_) { status("Clipboard access is unavailable in this browser.", true); }
 });
+
+function bakeAnnotation(kind) {
+  if (!guide) return;
+  const label = kind === "marker" ? (window.prompt("Marker label", String(selected + 1)) || "").trim() :
+    kind === "callout" ? (window.prompt("Callout text", guide.steps[selected].text.trim() || "Do this next") || "").trim() : "";
+  if ((kind === "marker" || kind === "callout") && !label) return;
+  const source = new Image();
+  source.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = source.naturalWidth; canvas.height = source.naturalHeight;
+    const context = canvas.getContext("2d");
+    context.drawImage(source, 0, 0);
+    const scale = Math.max(1, canvas.width / 1280);
+    context.lineJoin = "round";
+    if (kind === "marker") {
+      const x = canvas.width * 0.78, y = canvas.height * 0.22, radius = 30 * scale;
+      context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5 * scale;
+      context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill(); context.stroke();
+      context.fillStyle = "#15200e"; context.font = `800 ${28 * scale}px system-ui`; context.textAlign = "center"; context.textBaseline = "middle";
+      context.fillText(label.slice(0, 3), x, y);
+    } else if (kind === "callout") {
+      const x = canvas.width * 0.06, y = canvas.height * 0.07, width = canvas.width * 0.58, height = 78 * scale;
+      context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale;
+      context.beginPath(); context.roundRect(x, y, width, height, 12 * scale); context.fill(); context.stroke();
+      context.fillStyle = "#15200e"; context.font = `700 ${22 * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "middle";
+      context.fillText(label.slice(0, 72), x + 18 * scale, y + height / 2, width - 36 * scale);
+    } else {
+      const x = canvas.width * 0.56, y = canvas.height * 0.48, width = canvas.width * 0.28, height = canvas.height * 0.22;
+      context.fillStyle = "rgba(196,244,143,.20)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5 * scale;
+      context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
+    }
+    guide.steps[selected].image = canvas.toDataURL("image/png");
+    ui.image.src = guide.steps[selected].image;
+    persist();
+    clearVideo();
+    status(`${kind === "highlight" ? "Highlight" : kind === "marker" ? "Marker" : "Callout"} added to this scene.`);
+  };
+  source.src = guide.steps[selected].image;
+}
+ui.marker.addEventListener("click", () => bakeAnnotation("marker"));
+ui.callout.addEventListener("click", () => bakeAnnotation("callout"));
+ui.highlight.addEventListener("click", () => bakeAnnotation("highlight"));
 
 ui.redact.addEventListener("click", () => {
   if (!guide) return;
