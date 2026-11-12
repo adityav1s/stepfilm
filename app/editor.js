@@ -98,9 +98,9 @@ function renderAnnotations() {
     const object = document.createElement("div");
     object.className = `annotation-object annotation-${annotation.type}${annotation.id === selectedAnnotation ? " selected" : ""}`;
     object.dataset.annotationId = annotation.id;
-    const displayWidth = annotation.type === "callout" ? Math.max(annotation.width, Math.min(1, 180 / Math.max(1, ui.image.naturalWidth))) : annotation.width;
-    const displayHeight = annotation.type === "callout" ? Math.max(annotation.height, Math.min(1, 44 / Math.max(1, ui.image.naturalHeight))) : annotation.height;
-    object.style.left = `${annotation.x * 100}%`; object.style.top = `${Math.min(annotation.y, 1 - displayHeight) * 100}%`;
+    const displayBox = StepfilmAnnotations.geometry(annotation, Math.max(1, ui.image.naturalWidth), Math.max(1, ui.image.naturalHeight));
+    const displayWidth = displayBox.width / Math.max(1, ui.image.naturalWidth), displayHeight = displayBox.height / Math.max(1, ui.image.naturalHeight);
+    object.style.left = `${(displayBox.x / Math.max(1, ui.image.naturalWidth)) * 100}%`; object.style.top = `${(displayBox.y / Math.max(1, ui.image.naturalHeight)) * 100}%`;
     object.style.width = `${displayWidth * 100}%`; object.style.height = `${displayHeight * 100}%`;
     if (annotation.type === "arrow") {
       const angle = Math.atan2(annotation.height, annotation.width) * 180 / Math.PI;
@@ -349,11 +349,9 @@ async function flattenStep(step) {
     if (annotation.type === "marker") { context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5; context.beginPath(); context.arc(x + width / 2, y + height / 2, Math.max(12, Math.min(width, height) / 2), 0, Math.PI * 2); context.fill(); context.stroke(); context.fillStyle = "#15200e"; context.font = "800 28px system-ui"; context.textAlign = "center"; context.textBaseline = "middle"; context.fillText((annotation.text || "1").slice(0, 3), x + width / 2, y + height / 2); continue; }
     if (annotation.type === "callout") {
       context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
-      context.fillStyle = "#15200e"; context.font = `700 ${Math.max(14, Math.min(22, height * 0.28))}px system-ui`; context.textAlign = "left"; context.textBaseline = "top";
-      const words = (annotation.text || annotation.label || annotation.content || "Explain this").slice(0, 140).split(/\s+/); const lines = []; let line = ""; const maxWidth = Math.max(20, width - 24);
-      for (const word of words) { const candidate = line ? `${line} ${word}` : word; if (context.measureText(candidate).width > maxWidth && line) { lines.push(line); line = word; } else line = candidate; }
-      if (line) lines.push(line); const lineHeight = Math.max(16, height * 0.28); const maxLines = Math.max(1, Math.floor((height - 10) / lineHeight));
-      lines.slice(0, maxLines).forEach((value, index) => context.fillText(value, x + 12, y + 5 + index * lineHeight)); continue;
+      const layout = StepfilmAnnotations.geometry(annotation, source.naturalWidth, source.naturalHeight);
+      context.fillStyle = "#15200e"; context.font = `700 ${layout.fontSize}px system-ui`; context.textAlign = "left"; context.textBaseline = "top";
+      layout.lines.forEach((value, index) => context.fillText(value, x + 12, y + 5 + index * layout.lineHeight)); continue;
     }
     if (annotation.type === "arrow") { context.strokeStyle = "#c4f48f"; context.fillStyle = "#c4f48f"; context.lineWidth = 7; context.beginPath(); context.moveTo(x, y); context.lineTo(x + width, y + height); context.stroke(); const angle = Math.atan2(height, width); context.beginPath(); context.moveTo(x + width, y + height); context.lineTo(x + width - 22 * Math.cos(angle - Math.PI / 6), y + height - 22 * Math.sin(angle - Math.PI / 6)); context.lineTo(x + width - 22 * Math.cos(angle + Math.PI / 6), y + height - 22 * Math.sin(angle + Math.PI / 6)); context.closePath(); context.fill(); continue; }
     if (annotation.type === "highlight") { context.fillStyle = "rgba(196,244,143,.22)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); }
