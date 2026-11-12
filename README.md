@@ -37,11 +37,11 @@ For a quick first run without a capture, open `sample-guide.html` from this fold
 
 ## Create a tutorial
 
-1. Install [Mimik](https://github.com/westpoint-io/mimik) and capture a browser workflow.
+1. (Optional) Install [Mimik](https://github.com/westpoint-io/mimik) and capture a browser workflow if you prefer its recorder.
 2. Review the screenshots and apply any needed blur in Mimik. Export as **HTML** with screenshots included.
 3. Open the HTML guide in Stepfilm. Select each step to edit or play its narration. An empty line produces a silent scene.
 4. Click **Export MP4**. Stepfilm renders a 720p video and downloads it. You can also play it in the editor.
 
-Stepfilm uses the screenshots and annotations already embedded in the export. Each step is a still image timed to its narration. The current editor handles 1–50 steps and HTML guides under 50 MB. Edits last until you reload the editor. The original HTML remains your source.
+Stepfilm uses the screenshots and annotations already embedded in the export. Each step is a still image timed to its narration. The current editor handles 1–50 steps and HTML guides under 50 MB. Draft edits are saved locally in the browser; use **Save project** for a durable `.stepfilm.json` file. The original HTML remains your source.
 
 Stepfilm imports Mimik’s HTML export format and runs as a separate app. The source is MIT licensed. Mimik, FFmpeg, Piper, and voice models have their own licenses.

@@ -113,6 +113,22 @@ function loadGuide(imported) {
   persist();
 }
 
+function showEmptyState() {
+  stopPreview();
+  clearVideo();
+  guide = undefined;
+  selected = 0;
+  ui.title.textContent = "Turn browser steps into a tutorial.";
+  ui.instructions.hidden = false;
+  const quickStart = document.getElementById("quickStart");
+  if (quickStart) quickStart.hidden = false;
+  ui.workspace.hidden = true;
+  ui.export.hidden = true;
+  ui.saveProject.hidden = true;
+  ui.steps.replaceChildren();
+  ui.count.textContent = "";
+}
+
 function persist() {
   if (!guide) return;
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(guide)); ui.saveState.textContent = "Saved locally"; }
@@ -314,11 +330,12 @@ api("/api/status").then((response) => response.json()).then(({ voice }) => {
   ui.voice.textContent = `Local voice · ${voice}`;
 }).catch((error) => status(error.message, true));
 
-try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (saved?.steps?.length) loadGuide(saved); } catch (_) {}
-
-if (new URLSearchParams(location.search).get("capture") === "latest") {
+const captureLatest = new URLSearchParams(location.search).get("capture") === "latest";
+if (!captureLatest) {
+  try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (saved?.steps?.length) loadGuide(saved); } catch (_) {}
+} else {
   fetch("/api/capture/latest").then((response) => {
     if (!response.ok) throw new Error("No captured workflow is waiting in Stepfilm.");
     return response.json();
-  }).then(loadGuide).catch((error) => status(error.message, true));
+  }).then(loadGuide).catch(() => { showEmptyState(); status("No pending capture. Start a new capture from the Chrome extension."); });
 }
