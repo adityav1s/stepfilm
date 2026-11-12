@@ -6,6 +6,11 @@
   const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, Number(value) || 0));
   const id = () => `annotation-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const create = (type, x, y, width, height, text = "") => ({ id: id(), type, x: clamp(x), y: clamp(y), width: clamp(width, 0.02, 1), height: clamp(height, 0.02, 1), text: String(text).slice(0, 140) });
+  function geometry(annotation, imageWidth, imageHeight) {
+    const width = annotation.type === "callout" ? Math.max(annotation.width * imageWidth, Math.min(imageWidth, 180)) : annotation.width * imageWidth;
+    const height = annotation.type === "callout" ? Math.max(annotation.height * imageHeight, Math.min(imageHeight, 44)) : annotation.height * imageHeight;
+    return { x: annotation.x * imageWidth, y: Math.min(annotation.y * imageHeight, imageHeight - height), width, height };
+  }
   function normalizeGuide(input) {
     if (!input || !Array.isArray(input.steps) || !input.steps.length) throw new Error("That project does not contain any steps.");
     return { schemaVersion: 2, title: String(input.title || "Untitled guide").slice(0, 150), steps: input.steps.map((step) => {
@@ -18,5 +23,5 @@
       }) : [] };
     }) };
   }
-  return { clamp, create, normalizeGuide };
+  return { clamp, create, geometry, normalizeGuide };
 });

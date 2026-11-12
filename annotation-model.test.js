@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { create, normalizeGuide } = require("./app/annotation-model.js");
+const { create, geometry, normalizeGuide } = require("./app/annotation-model.js");
 
 const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const guide = normalizeGuide({ title: "Legacy", steps: [{ image, text: "Click target" }] });
@@ -15,4 +15,6 @@ const legacyCallout = normalizeGuide({ title: "Legacy callout", steps: [{ image,
 assert.equal(legacyCallout.text, "Open dashboard");
 assert.equal(legacyCallout.width, 0.58);
 assert.equal(legacyCallout.height, 0.12);
+const lowResCallout = geometry({ type: "callout", x: 0.1, y: 0.1, width: 0.58, height: 0.12 }, 124, 96);
+assert(lowResCallout.width >= 110 && lowResCallout.height >= 44, "124x96 callout must have a readable render box");
 console.log("annotation model: PASS");

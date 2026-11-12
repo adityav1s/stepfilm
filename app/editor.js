@@ -98,8 +98,10 @@ function renderAnnotations() {
     const object = document.createElement("div");
     object.className = `annotation-object annotation-${annotation.type}${annotation.id === selectedAnnotation ? " selected" : ""}`;
     object.dataset.annotationId = annotation.id;
-    object.style.left = `${annotation.x * 100}%`; object.style.top = `${annotation.y * 100}%`;
-    object.style.width = `${annotation.width * 100}%`; object.style.height = `${annotation.height * 100}%`;
+    const displayWidth = annotation.type === "callout" ? Math.max(annotation.width, Math.min(1, 180 / Math.max(1, ui.image.naturalWidth))) : annotation.width;
+    const displayHeight = annotation.type === "callout" ? Math.max(annotation.height, Math.min(1, 44 / Math.max(1, ui.image.naturalHeight))) : annotation.height;
+    object.style.left = `${annotation.x * 100}%`; object.style.top = `${Math.min(annotation.y, 1 - displayHeight) * 100}%`;
+    object.style.width = `${displayWidth * 100}%`; object.style.height = `${displayHeight * 100}%`;
     if (annotation.type === "arrow") {
       const angle = Math.atan2(annotation.height, annotation.width) * 180 / Math.PI;
       object.style.transform = `rotate(${angle}deg)`;
@@ -331,27 +333,30 @@ function loadImage(source) {
 }
 async function flattenStep(step) {
   const source = await loadImage(step.sourceImage || step.image);
-  const canvas = document.createElement("canvas"); canvas.width = source.naturalWidth; canvas.height = source.naturalHeight;
-  const context = canvas.getContext("2d"); context.drawImage(source, 0, 0);
-  const scale = Math.max(1, canvas.width / 1280);
+  const base = document.createElement("canvas"); base.width = source.naturalWidth; base.height = source.naturalHeight;
+  const baseContext = base.getContext("2d"); baseContext.drawImage(source, 0, 0);
+  const scale = Math.max(1, 1280 / source.naturalWidth, 720 / source.naturalHeight);
+  const canvas = document.createElement("canvas"); canvas.width = Math.round(source.naturalWidth * scale); canvas.height = Math.round(source.naturalHeight * scale);
+  const context = canvas.getContext("2d"); context.scale(scale, scale); context.drawImage(base, 0, 0);
   for (const annotation of step.annotations || []) {
-    const x = annotation.x * canvas.width, y = annotation.y * canvas.height, width = annotation.width * canvas.width, height = annotation.height * canvas.height;
+    const box = StepfilmAnnotations.geometry(annotation, source.naturalWidth, source.naturalHeight);
+    const { x, y, width, height } = box;
     if (annotation.type === "blur") {
       const crop = document.createElement("canvas"); crop.width = Math.max(1, Math.round(width)); crop.height = Math.max(1, Math.round(height));
-      const cropContext = crop.getContext("2d"); cropContext.filter = `blur(${Math.max(10, 18 * scale)}px)`; cropContext.drawImage(canvas, x, y, width, height, 0, 0, crop.width, crop.height);
-      context.drawImage(crop, x, y, width, height); context.fillStyle = "rgba(16,24,39,.72)"; context.fillRect(x, y, width, height); context.strokeStyle = "rgba(255,173,165,.9)"; context.lineWidth = 4 * scale; context.strokeRect(x, y, width, height); continue;
+      const cropContext = crop.getContext("2d"); cropContext.filter = "blur(18px)"; cropContext.drawImage(base, x, y, width, height, 0, 0, crop.width, crop.height);
+      context.drawImage(crop, x, y, width, height); context.fillStyle = "rgba(16,24,39,.72)"; context.fillRect(x, y, width, height); context.strokeStyle = "rgba(255,173,165,.9)"; context.lineWidth = 4; context.strokeRect(x, y, width, height); continue;
     }
-    if (annotation.type === "marker") { context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5 * scale; context.beginPath(); context.arc(x + width / 2, y + height / 2, Math.max(12, Math.min(width, height) / 2), 0, Math.PI * 2); context.fill(); context.stroke(); context.fillStyle = "#15200e"; context.font = `800 ${28 * scale}px system-ui`; context.textAlign = "center"; context.textBaseline = "middle"; context.fillText((annotation.text || "1").slice(0, 3), x + width / 2, y + height / 2); continue; }
+    if (annotation.type === "marker") { context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5; context.beginPath(); context.arc(x + width / 2, y + height / 2, Math.max(12, Math.min(width, height) / 2), 0, Math.PI * 2); context.fill(); context.stroke(); context.fillStyle = "#15200e"; context.font = "800 28px system-ui"; context.textAlign = "center"; context.textBaseline = "middle"; context.fillText((annotation.text || "1").slice(0, 3), x + width / 2, y + height / 2); continue; }
     if (annotation.type === "callout") {
-      context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
-      context.fillStyle = "#15200e"; context.font = `700 ${Math.max(14, Math.min(22, height / scale * 0.28)) * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "top";
-      const words = (annotation.text || annotation.label || annotation.content || "Explain this").slice(0, 140).split(/\s+/); const lines = []; let line = ""; const maxWidth = Math.max(20, width - 36 * scale);
+      context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
+      context.fillStyle = "#15200e"; context.font = `700 ${Math.max(14, Math.min(22, height * 0.28))}px system-ui`; context.textAlign = "left"; context.textBaseline = "top";
+      const words = (annotation.text || annotation.label || annotation.content || "Explain this").slice(0, 140).split(/\s+/); const lines = []; let line = ""; const maxWidth = Math.max(20, width - 24);
       for (const word of words) { const candidate = line ? `${line} ${word}` : word; if (context.measureText(candidate).width > maxWidth && line) { lines.push(line); line = word; } else line = candidate; }
-      if (line) lines.push(line); const lineHeight = Math.max(16, height / scale * 0.28) * scale; const maxLines = Math.max(1, Math.floor((height - 20 * scale) / lineHeight));
-      lines.slice(0, maxLines).forEach((value, index) => context.fillText(value, x + 18 * scale, y + 10 * scale + index * lineHeight)); continue;
+      if (line) lines.push(line); const lineHeight = Math.max(16, height * 0.28); const maxLines = Math.max(1, Math.floor((height - 10) / lineHeight));
+      lines.slice(0, maxLines).forEach((value, index) => context.fillText(value, x + 12, y + 5 + index * lineHeight)); continue;
     }
-    if (annotation.type === "arrow") { context.strokeStyle = "#c4f48f"; context.fillStyle = "#c4f48f"; context.lineWidth = 7 * scale; context.beginPath(); context.moveTo(x, y); context.lineTo(x + width, y + height); context.stroke(); const angle = Math.atan2(height, width); context.beginPath(); context.moveTo(x + width, y + height); context.lineTo(x + width - 22 * scale * Math.cos(angle - Math.PI / 6), y + height - 22 * scale * Math.sin(angle - Math.PI / 6)); context.lineTo(x + width - 22 * scale * Math.cos(angle + Math.PI / 6), y + height - 22 * scale * Math.sin(angle + Math.PI / 6)); context.closePath(); context.fill(); continue; }
-    if (annotation.type === "highlight") { context.fillStyle = "rgba(196,244,143,.22)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); }
+    if (annotation.type === "arrow") { context.strokeStyle = "#c4f48f"; context.fillStyle = "#c4f48f"; context.lineWidth = 7; context.beginPath(); context.moveTo(x, y); context.lineTo(x + width, y + height); context.stroke(); const angle = Math.atan2(height, width); context.beginPath(); context.moveTo(x + width, y + height); context.lineTo(x + width - 22 * Math.cos(angle - Math.PI / 6), y + height - 22 * Math.sin(angle - Math.PI / 6)); context.lineTo(x + width - 22 * Math.cos(angle + Math.PI / 6), y + height - 22 * Math.sin(angle + Math.PI / 6)); context.closePath(); context.fill(); continue; }
+    if (annotation.type === "highlight") { context.fillStyle = "rgba(196,244,143,.22)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); }
   }
   return canvas.toDataURL("image/png");
 }
@@ -449,7 +454,14 @@ function finishAnnotationGesture(event) {
   annotationStart = undefined;
   if (kind === "highlight" || kind === "blur") {
     const area = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) };
-    if (area.width < 0.03 || area.height < 0.03) { status("Drag across a larger target area.", true); return; }
+    if (area.width < 0.03 || area.height < 0.03) {
+      if (kind === "blur") {
+        highlightJustBaked = true;
+        setTimeout(() => { highlightJustBaked = false; }, 0);
+        addAnnotation("blur", { x: Math.max(0, Math.min(0.8, end.x - 0.1)), y: Math.max(0, Math.min(0.88, end.y - 0.06)), width: 0.2, height: 0.12 });
+      } else status("Drag across a larger target area.", true);
+      return;
+    }
     highlightJustBaked = true;
     setTimeout(() => { highlightJustBaked = false; }, 0);
     addAnnotation(kind, area);
@@ -462,8 +474,9 @@ function finishAnnotationGesture(event) {
 document.addEventListener("pointerup", finishAnnotationGesture);
 document.addEventListener("pointercancel", () => { annotationStart = undefined; });
 ui.image.addEventListener("click", () => {
-  if (annotationMode !== "highlight" || highlightJustBaked) return;
-  addAnnotation("highlight", { x: 0.36, y: 0.34, width: 0.28, height: 0.22 });
+  if (highlightJustBaked) return;
+  if (annotationMode === "highlight") addAnnotation("highlight", { x: 0.36, y: 0.34, width: 0.28, height: 0.22 });
+  if (annotationMode === "blur") { const point = imagePoint(event); addAnnotation("blur", { x: Math.max(0, Math.min(0.8, point.x - 0.1)), y: Math.max(0, Math.min(0.88, point.y - 0.06)), width: 0.2, height: 0.12 }); }
 });
 
 ui.annotationApply.addEventListener("click", () => {
