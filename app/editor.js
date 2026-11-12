@@ -72,6 +72,7 @@ function cancelTools() {
   ui.redact.textContent = "Redact pixels";
   ui.redactionHint.hidden = true;
   ui.redactionCanvas.style.pointerEvents = "none";
+  ui.redactionCanvas.classList.remove("is-active");
   ui.image.style.cursor = "default";
   for (const button of [ui.marker, ui.callout, ui.highlight, ui.arrow, ui.blur]) button.classList.remove("active");
   ui.annotationHint.textContent = "Choose a tool, then place it on the screenshot.";
