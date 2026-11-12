@@ -14,7 +14,7 @@ from render import Renderer, parse_guide
 
 APP = Path(__file__).resolve().parent / "app"
 STATIC = {"/": ("index.html", "text/html"), "/style.css": ("style.css", "text/css"),
-          "/editor.js": ("editor.js", "text/javascript")}
+          "/editor.js": ("editor.js", "text/javascript"), "/annotation-model.js": ("annotation-model.js", "text/javascript")}
 MAX_REQUEST = 50 * 1024 * 1024
 EXPORT_LOCK = Lock()
 

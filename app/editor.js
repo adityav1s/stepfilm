@@ -1,7 +1,7 @@
 const get = (id) => document.getElementById(id);
 const ui = Object.fromEntries(
   ["voice", "saveState", "title", "instructions", "open", "openProject", "file", "projectFile", "export", "download", "saveProject",
-   "status", "workspace", "count", "steps", "image", "sceneTitle", "narration", "charCount", "preview", "redact", "marker", "callout", "highlight", "annotationHint", "redactionHint", "redactionCanvas", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove"]
+   "status", "workspace", "count", "steps", "image", "sceneTitle", "narration", "charCount", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove"]
     .map((id) => [id, get(id)]),
 );
 let guide;
@@ -16,6 +16,9 @@ let redactionStart;
 let annotationMode;
 let annotationStart;
 let highlightJustBaked = false;
+let selectedAnnotation;
+let annotationHistory = [];
+let annotationFuture = [];
 
 function status(message, error = false) {
   ui.status.textContent = message;
@@ -70,8 +73,57 @@ function cancelTools() {
   ui.redactionHint.hidden = true;
   ui.redactionCanvas.style.pointerEvents = "none";
   ui.image.style.cursor = "default";
-  for (const button of [ui.marker, ui.callout, ui.highlight]) button.classList.remove("active");
+  for (const button of [ui.marker, ui.callout, ui.highlight, ui.arrow, ui.blur]) button.classList.remove("active");
   ui.annotationHint.textContent = "Choose a tool, then place it on the screenshot.";
+}
+
+function currentAnnotations() { return guide?.steps[selected]?.annotations || []; }
+function snapshotAnnotations() { return JSON.parse(JSON.stringify(currentAnnotations())); }
+function recordAnnotationChange() { annotationHistory.push(snapshotAnnotations()); if (annotationHistory.length > 30) annotationHistory.shift(); annotationFuture = []; }
+function restoreAnnotations(value) { guide.steps[selected].annotations = JSON.parse(JSON.stringify(value)); selectedAnnotation = undefined; renderAnnotations(); persist(); clearVideo(); updateAnnotationControls(); }
+function updateAnnotationControls() {
+  const annotation = currentAnnotations().find((item) => item.id === selectedAnnotation);
+  ui.annotationText.disabled = !annotation;
+  ui.annotationText.placeholder = annotation ? "Edit selected marker or callout text" : "Select an annotation to edit its text";
+  ui.annotationText.value = annotation?.text || "";
+  ui.annotationDelete.disabled = !annotation;
+  ui.annotationApply.disabled = !annotation;
+  ui.annotationUndo.disabled = !annotationHistory.length;
+  ui.annotationRedo.disabled = !annotationFuture.length;
+}
+function renderAnnotations() {
+  ui.annotationLayer.replaceChildren();
+  for (const annotation of currentAnnotations()) {
+    const object = document.createElement("div");
+    object.className = `annotation-object annotation-${annotation.type}${annotation.id === selectedAnnotation ? " selected" : ""}`;
+    object.dataset.annotationId = annotation.id;
+    object.style.left = `${annotation.x * 100}%`; object.style.top = `${annotation.y * 100}%`;
+    object.style.width = `${annotation.width * 100}%`; object.style.height = `${annotation.height * 100}%`;
+    if (annotation.type === "arrow") {
+      const angle = Math.atan2(annotation.height, annotation.width) * 180 / Math.PI;
+      object.style.transform = `rotate(${angle}deg)`;
+      object.style.width = `${Math.max(annotation.width, 0.05) * 100}%`;
+    } else if (annotation.type === "marker") object.textContent = annotation.text || "1";
+    else if (annotation.type === "callout") object.textContent = annotation.text || "Explain this";
+    const handle = document.createElement("span"); handle.className = "resize-handle"; handle.title = "Resize annotation"; object.append(handle);
+    object.addEventListener("pointerdown", (event) => beginAnnotationDrag(event, annotation.id, event.target === handle));
+    ui.annotationLayer.append(object);
+  }
+  updateAnnotationControls();
+}
+function beginAnnotationDrag(event, id, resizing) {
+  event.preventDefault(); event.stopPropagation(); selectedAnnotation = id; renderAnnotations();
+  const start = { x: event.clientX, y: event.clientY, annotations: snapshotAnnotations() };
+  const layer = ui.annotationLayer.getBoundingClientRect();
+  const move = (moveEvent) => {
+    const annotation = currentAnnotations().find((item) => item.id === id); if (!annotation) return;
+    const dx = (moveEvent.clientX - start.x) / layer.width, dy = (moveEvent.clientY - start.y) / layer.height;
+    if (resizing) { annotation.width = Math.max(0.02, Math.min(1 - annotation.x, start.annotations.find((item) => item.id === id).width + dx)); annotation.height = Math.max(0.02, Math.min(1 - annotation.y, start.annotations.find((item) => item.id === id).height + dy)); }
+    else { annotation.x = Math.max(0, Math.min(1 - annotation.width, start.annotations.find((item) => item.id === id).x + dx)); annotation.y = Math.max(0, Math.min(1 - annotation.height, start.annotations.find((item) => item.id === id).y + dy)); }
+    renderAnnotations();
+  };
+  const stop = () => { document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", stop); annotationHistory.push(start.annotations); annotationFuture = []; persist(); clearVideo(); updateAnnotationControls(); };
+  document.addEventListener("pointermove", move); document.addEventListener("pointerup", stop, { once: true });
 }
 
 function stepLabel(index) {
@@ -81,9 +133,12 @@ function stepLabel(index) {
 function select(index) {
   stopPreview();
   cancelTools();
+  annotationHistory = [];
+  annotationFuture = [];
+  selectedAnnotation = undefined;
   selected = index;
   const step = guide.steps[index];
-  ui.image.src = step.image;
+  ui.image.src = step.sourceImage || step.image;
   ui.image.alt = `Screenshot of step ${index + 1}`;
   ui.sceneTitle.textContent = `Step ${String(index + 1).padStart(2, "0")}`;
   ui.narration.value = step.text;
@@ -94,6 +149,7 @@ function select(index) {
   ui.saveProject.hidden = false;
   ui.redactionCanvas.width = 0;
   ui.redactionCanvas.height = 0;
+  renderAnnotations();
   for (const [position, item] of [...ui.steps.children].entries()) {
     item.firstChild.setAttribute("aria-current", position === index ? "step" : "false");
   }
@@ -102,7 +158,10 @@ function select(index) {
 function loadGuide(imported) {
   stopPreview();
   clearVideo();
-  guide = imported;
+  guide = StepfilmAnnotations.normalizeGuide(imported);
+  selectedAnnotation = undefined;
+  annotationHistory = [];
+  annotationFuture = [];
   ui.title.textContent = guide.title;
   ui.instructions.hidden = true;
   const quickStart = document.getElementById("quickStart");
@@ -169,7 +228,10 @@ function renderGuidePreview() {
     image.src = step.image;
     image.alt = `Step ${index + 1}`;
     copy.append(title, image);
-    if (step.text.trim()) { const text = document.createElement("p"); text.textContent = step.text; copy.append(text); }
+    const text = document.createElement("p");
+    text.textContent = step.text.trim() || "No written instruction yet — add one in the editor so viewers know what to do.";
+    if (!step.text.trim()) text.className = "missing-instruction";
+    copy.append(text);
     item.append(number, copy);
     ui.guidePreview.append(item);
   });
@@ -257,6 +319,26 @@ ui.preview.addEventListener("click", async () => {
   }
 });
 
+function loadImage(source) {
+  return new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = source; });
+}
+async function flattenStep(step) {
+  const source = await loadImage(step.sourceImage || step.image);
+  const canvas = document.createElement("canvas"); canvas.width = source.naturalWidth; canvas.height = source.naturalHeight;
+  const context = canvas.getContext("2d"); context.drawImage(source, 0, 0);
+  const scale = Math.max(1, canvas.width / 1280);
+  for (const annotation of step.annotations || []) {
+    const x = annotation.x * canvas.width, y = annotation.y * canvas.height, width = annotation.width * canvas.width, height = annotation.height * canvas.height;
+    if (annotation.type === "blur") { context.save(); context.filter = `blur(${Math.max(10, 18 * scale)}px)`; context.drawImage(canvas, x, y, width, height, x, y, width, height); context.restore(); context.fillStyle = "rgba(12,17,28,.22)"; context.fillRect(x, y, width, height); continue; }
+    if (annotation.type === "marker") { context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5 * scale; context.beginPath(); context.arc(x + width / 2, y + height / 2, Math.max(12, Math.min(width, height) / 2), 0, Math.PI * 2); context.fill(); context.stroke(); context.fillStyle = "#15200e"; context.font = `800 ${28 * scale}px system-ui`; context.textAlign = "center"; context.textBaseline = "middle"; context.fillText((annotation.text || "1").slice(0, 3), x + width / 2, y + height / 2); continue; }
+    if (annotation.type === "callout") { context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); context.fillStyle = "#15200e"; context.font = `700 ${22 * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "middle"; context.fillText((annotation.text || "Explain this").slice(0, 72), x + 18 * scale, y + height / 2, Math.max(20, width - 36 * scale)); continue; }
+    if (annotation.type === "arrow") { context.strokeStyle = "#c4f48f"; context.fillStyle = "#c4f48f"; context.lineWidth = 7 * scale; context.beginPath(); context.moveTo(x, y); context.lineTo(x + width, y + height); context.stroke(); const angle = Math.atan2(height, width); context.beginPath(); context.moveTo(x + width, y + height); context.lineTo(x + width - 22 * scale * Math.cos(angle - Math.PI / 6), y + height - 22 * scale * Math.sin(angle - Math.PI / 6)); context.lineTo(x + width - 22 * scale * Math.cos(angle + Math.PI / 6), y + height - 22 * scale * Math.sin(angle + Math.PI / 6)); context.closePath(); context.fill(); continue; }
+    if (annotation.type === "highlight") { context.fillStyle = "rgba(196,244,143,.22)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); }
+  }
+  return canvas.toDataURL("image/png");
+}
+async function exportSteps() { return Promise.all(guide.steps.map(async (step) => ({ ...step, image: await flattenStep(step), annotations: [] }))); }
+
 ui.export.addEventListener("click", async () => {
   stopPreview();
   clearVideo();
@@ -265,7 +347,7 @@ ui.export.addEventListener("click", async () => {
   ui.narration.disabled = true;
   status("Rendering video on this computer…");
   try {
-    const response = await api("/api/export", { steps: guide.steps });
+    const response = await api("/api/export", { steps: await exportSteps() });
     const videoBytes = await response.arrayBuffer();
     videoUrl = URL.createObjectURL(new Blob([videoBytes], { type: "video/mp4" }));
     const name = guide.title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 80);
@@ -314,57 +396,26 @@ function imagePoint(event) {
   const rect = ui.image.getBoundingClientRect();
   return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) };
 }
-
-function bakeAnnotation(kind, area) {
-  if (!guide) return;
-  const label = kind === "marker" ? String(selected + 1) : (guide.steps[selected].text.trim() || "Do this next");
-  const source = new Image();
-  source.onload = () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = source.naturalWidth; canvas.height = source.naturalHeight;
-    const context = canvas.getContext("2d");
-    context.drawImage(source, 0, 0);
-    const scale = Math.max(1, canvas.width / 1280);
-    context.lineJoin = "round";
-    if (kind === "marker") {
-      const x = canvas.width * area.x, y = canvas.height * area.y, radius = 30 * scale;
-      context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5 * scale;
-      context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill(); context.stroke();
-      context.fillStyle = "#15200e"; context.font = `800 ${28 * scale}px system-ui`; context.textAlign = "center"; context.textBaseline = "middle";
-      context.fillText(label.slice(0, 3), x, y);
-    } else if (kind === "callout") {
-      const width = canvas.width * 0.58, height = 78 * scale;
-      const x = Math.max(0, Math.min(canvas.width - width, canvas.width * area.x - width / 2));
-      const y = Math.max(0, Math.min(canvas.height - height, canvas.height * area.y - height / 2));
-      context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale;
-      context.beginPath(); context.roundRect(x, y, width, height, 12 * scale); context.fill(); context.stroke();
-      context.fillStyle = "#15200e"; context.font = `700 ${22 * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "middle";
-      context.fillText(label.slice(0, 72), x + 18 * scale, y + height / 2, width - 36 * scale);
-    } else {
-      const x = canvas.width * area.x, y = canvas.height * area.y, width = canvas.width * area.width, height = canvas.height * area.height;
-      context.fillStyle = "rgba(196,244,143,.20)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5 * scale;
-      context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
-    }
-    guide.steps[selected].image = canvas.toDataURL("image/png");
-    ui.image.src = guide.steps[selected].image;
-    persist();
-    clearVideo();
-    cancelTools();
-    status(`${kind === "highlight" ? "Highlight" : kind === "marker" ? "Marker" : "Callout"} added to this scene.`);
-  };
-  source.src = guide.steps[selected].image;
+function addAnnotation(type, area) {
+  recordAnnotationChange();
+  const text = type === "marker" ? String(currentAnnotations().length + 1) : type === "callout" ? (guide.steps[selected].text.trim() || "Explain this") : "";
+  const annotation = StepfilmAnnotations.create(type, area.x, area.y, area.width, area.height, text);
+  guide.steps[selected].annotations.push(annotation); selectedAnnotation = annotation.id;
+  persist(); clearVideo(); cancelTools(); renderAnnotations(); status(`${type[0].toUpperCase() + type.slice(1)} added. Drag it to the exact target; use the resize handle to size it.`);
 }
 function chooseAnnotation(kind) {
   cancelTools();
   annotationMode = kind;
-  const button = kind === "marker" ? ui.marker : kind === "callout" ? ui.callout : ui.highlight;
+  const button = ({ marker: ui.marker, callout: ui.callout, highlight: ui.highlight, arrow: ui.arrow, blur: ui.blur })[kind];
   button.classList.add("active");
-  ui.image.style.cursor = kind === "highlight" ? "crosshair" : "copy";
-  ui.annotationHint.textContent = kind === "highlight" ? "Drag over the area to highlight, or click for a default highlight. Press Esc to cancel." : "Click the part of the screenshot this annotation should explain. Press Esc to cancel.";
+  ui.image.style.cursor = kind === "highlight" || kind === "blur" ? "crosshair" : "copy";
+  ui.annotationHint.textContent = kind === "highlight" || kind === "blur" ? "Drag over the target area. Press Esc to cancel." : "Click the target, then drag to move or resize it. Press Esc to cancel.";
 }
 ui.marker.addEventListener("click", () => chooseAnnotation("marker"));
 ui.callout.addEventListener("click", () => chooseAnnotation("callout"));
 ui.highlight.addEventListener("click", () => chooseAnnotation("highlight"));
+ui.arrow.addEventListener("click", () => chooseAnnotation("arrow"));
+ui.blur.addEventListener("click", () => chooseAnnotation("blur"));
 
 ui.image.addEventListener("pointerdown", (event) => {
   if (!annotationMode) return;
@@ -377,30 +428,39 @@ ui.image.addEventListener("pointerup", (event) => {
   const kind = annotationMode;
   const start = annotationStart;
   annotationStart = undefined;
-  if (kind === "highlight") {
+  if (kind === "highlight" || kind === "blur") {
     const area = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) };
-    if (area.width < 0.03 || area.height < 0.03) { status("Drag across a larger area to create a highlight.", true); return; }
+    if (area.width < 0.03 || area.height < 0.03) { status("Drag across a larger target area.", true); return; }
     highlightJustBaked = true;
     setTimeout(() => { highlightJustBaked = false; }, 0);
-    bakeAnnotation(kind, area);
+    addAnnotation(kind, area);
   } else {
-    bakeAnnotation(kind, end);
+    addAnnotation(kind, { x: end.x - 0.025, y: end.y - 0.025, width: kind === "arrow" ? 0.22 : 0.05, height: kind === "arrow" ? 0.01 : 0.05 });
   }
 });
 ui.image.addEventListener("click", () => {
   if (annotationMode !== "highlight" || highlightJustBaked) return;
-  bakeAnnotation("highlight", { x: 0.5, y: 0.45, width: 0.28, height: 0.22 });
+  addAnnotation("highlight", { x: 0.36, y: 0.34, width: 0.28, height: 0.22 });
 });
 
-ui.redact.addEventListener("click", () => {
-  if (!guide) return;
-  cancelTools();
-  redacting = !redacting;
-  ui.redact.classList.toggle("active", redacting);
-  ui.redactionHint.hidden = !redacting;
-  ui.redactionCanvas.style.pointerEvents = redacting ? "auto" : "none";
-  ui.redact.textContent = redacting ? "Done redacting" : "Redact pixels";
+ui.annotationApply.addEventListener("click", () => {
+  const annotation = currentAnnotations().find((item) => item.id === selectedAnnotation); if (!annotation) return;
+  recordAnnotationChange(); annotation.text = ui.annotationText.value.slice(0, 140); persist(); renderAnnotations(); clearVideo(); status("Annotation text updated.");
 });
+ui.annotationDelete.addEventListener("click", () => {
+  if (!selectedAnnotation) return;
+  recordAnnotationChange(); guide.steps[selected].annotations = currentAnnotations().filter((item) => item.id !== selectedAnnotation); selectedAnnotation = undefined; persist(); renderAnnotations(); clearVideo(); status("Annotation deleted.");
+});
+ui.annotationUndo.addEventListener("click", () => {
+  if (!annotationHistory.length) return;
+  annotationFuture.push(snapshotAnnotations()); restoreAnnotations(annotationHistory.pop()); status("Annotation change undone.");
+});
+ui.annotationRedo.addEventListener("click", () => {
+  if (!annotationFuture.length) return;
+  annotationHistory.push(snapshotAnnotations()); restoreAnnotations(annotationFuture.pop()); status("Annotation change redone.");
+});
+
+ui.redact.addEventListener("click", () => { if (guide) chooseAnnotation("blur"); });
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") cancelTools(); });
 ui.redactionCanvas.addEventListener("pointerdown", (event) => {
   if (!redacting) return;

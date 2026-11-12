@@ -77,6 +77,19 @@ li button[aria-current="step"] { border-color: var(--accent); }
 .tool-label { color: var(--muted); font-size: 12px; font-weight: 750; margin-right: 3px; }
 .annotation-tools .button { padding: 7px 10px; font-size: 12px; }
 .annotation-hint { flex: 1 1 100%; color: var(--muted); font-size: 12px; }
+.annotation-edit { flex: 1 1 100%; display: flex; gap: 6px; flex-wrap: wrap; }
+.annotation-edit input { flex: 1 1 190px; min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); padding: 7px 9px; }
+.annotation-edit .button { padding: 7px 9px; }
+.annotation-layer { position: absolute; inset: 16px; pointer-events: none; }
+.annotation-object { position: absolute; pointer-events: auto; box-sizing: border-box; cursor: move; user-select: none; }
+.annotation-object.selected { outline: 2px solid #fff; outline-offset: 2px; }
+.annotation-object .resize-handle { position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px; border-radius: 50%; background: #fff; border: 2px solid #15200e; cursor: nwse-resize; }
+.annotation-marker { border-radius: 50%; background: var(--accent); color: #15200e; border: 3px solid #15200e; display: grid; place-items: center; font-weight: 800; }
+.annotation-callout { border-radius: 8px; padding: 8px 12px; background: rgba(196,244,143,.95); color: #15200e; border: 2px solid #15200e; font-weight: 700; overflow: hidden; }
+.annotation-highlight { border: 3px solid var(--accent); background: rgba(196,244,143,.22); }
+.annotation-blur { border: 3px solid #ffada5; background: repeating-linear-gradient(135deg, rgba(10,15,25,.72), rgba(10,15,25,.72) 8px, rgba(255,173,165,.58) 8px, rgba(255,173,165,.58) 12px); }
+.annotation-arrow { height: 0 !important; border-top: 4px solid var(--accent); transform-origin: left center; }
+.annotation-arrow::after { content: ""; position: absolute; right: -2px; top: -10px; border-left: 16px solid var(--accent); border-top: 8px solid transparent; border-bottom: 8px solid transparent; }
 .label-row, .script-actions, .result-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .label-row span, .hint { color: var(--muted); font-size: 12px; }
 label { display: block; font-weight: 700; margin-bottom: 8px; }
@@ -94,6 +107,7 @@ textarea { display: block; width: 100%; resize: vertical; margin-bottom: 12px; p
 .guide-preview strong { display: block; margin-bottom: 10px; }
 .guide-preview img { display: block; width: min(360px, 100%); border-radius: 7px; border: 1px solid var(--line); }
 .guide-preview p { margin: 10px 0 0; }
+.guide-preview .missing-instruction { color: #ffada5; }
 @media (max-width: 660px) {
   .top { padding-inline: 16px; }
   .local { display: none; }

@@ -11,6 +11,7 @@ node --check "$ROOT/app/editor.js"
 node --check "$ROOT/capture-extension/popup.js"
 node --check "$ROOT/capture-extension/background.js"
 node --check "$ROOT/capture-extension/content.js"
+node "$ROOT/annotation-model.test.js"
 python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$ROOT/capture-extension/manifest.json"
 
 echo "[2/5] Server health"

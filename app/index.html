@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stepfilm</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/annotation-model.js" defer></script>
   <script src="/editor.js" defer></script>
 </head>
 <body>
@@ -41,7 +42,7 @@
       </aside>
       <div class="scene">
         <div class="scene-bar"><div><span class="eyebrow">VIDEO SCENE</span><strong id="sceneTitle">Step 01</strong></div><div class="scene-tools"><button id="moveUp" class="icon-button" title="Move step up" aria-label="Move step up">↑</button><button id="moveDown" class="icon-button" title="Move step down" aria-label="Move step down">↓</button><button id="duplicate" class="icon-button" title="Duplicate step" aria-label="Duplicate step">＋</button><button id="remove" class="icon-button danger" title="Delete step" aria-label="Delete step">×</button></div></div>
-        <div class="frame"><div id="redactionHint" class="redaction-hint" hidden>Drag over sensitive pixels to redact · Esc to cancel</div><canvas id="redactionCanvas"></canvas><img id="image" alt="Screenshot of the selected step"></div>
+        <div class="frame"><div id="redactionHint" class="redaction-hint" hidden>Drag over sensitive pixels to redact · Esc to cancel</div><canvas id="redactionCanvas"></canvas><img id="image" alt="Screenshot of the selected step"><div id="annotationLayer" class="annotation-layer" aria-label="Editable annotations"></div></div>
         <div class="script">
           <div class="label-row"><label for="narration">Viewer instruction &amp; narration</label><span id="charCount">0 / 400</span></div>
           <textarea id="narration" maxlength="400" rows="3" placeholder="Tell the viewer what to do, for example: Click Settings, then choose Billing."></textarea>
@@ -50,7 +51,10 @@
             <button id="marker" class="button">Place marker</button>
             <button id="callout" class="button">Place callout</button>
             <button id="highlight" class="button">Draw highlight</button>
+            <button id="arrow" class="button">Draw arrow</button>
+            <button id="blur" class="button">Blur target</button>
             <span id="annotationHint" class="annotation-hint" aria-live="polite">Choose a tool, then place it on the screenshot.</span>
+            <div class="annotation-edit"><input id="annotationText" maxlength="140" placeholder="Selected annotation text" aria-label="Selected annotation text"><button id="annotationApply" class="button">Apply text</button><button id="annotationDelete" class="button danger">Delete</button><button id="annotationUndo" class="button">Undo</button><button id="annotationRedo" class="button">Redo</button></div>
           </div>
           <div class="script-actions"><div><button id="preview">Play narration</button><button id="redact" class="button">Redact pixels</button></div><span class="hint">Blank lines become silent scenes</span></div>
         </div>
