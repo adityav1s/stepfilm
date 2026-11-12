@@ -211,11 +211,12 @@ function persist() {
   catch (_) { ui.saveState.textContent = "Draft loaded"; }
 }
 
-function renderGuidePreview() {
+async function renderGuidePreview() {
   ui.guidePreview.replaceChildren();
   const heading = document.createElement("h3");
   heading.textContent = guide.title;
   ui.guidePreview.append(heading);
+  const images = await Promise.all(guide.steps.map((step) => flattenStep(step)));
   guide.steps.forEach((step, index) => {
     const item = document.createElement("article");
     const number = document.createElement("span");
@@ -225,7 +226,7 @@ function renderGuidePreview() {
     const title = document.createElement("strong");
     title.textContent = stepLabel(index);
     const image = document.createElement("img");
-    image.src = step.image;
+    image.src = images[index];
     image.alt = `Step ${index + 1}`;
     copy.append(title, image);
     const text = document.createElement("p");
@@ -374,7 +375,7 @@ ui.export.addEventListener("click", async () => {
       ui.download.hidden = false;
     };
     ui.video.load();
-    renderGuidePreview();
+    await renderGuidePreview();
     ui.download.click();
     status("Your MP4 is ready. The download is available below.");
   } catch (error) {
