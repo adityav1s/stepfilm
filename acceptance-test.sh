@@ -30,6 +30,9 @@ data=json.load(open('/tmp/stepfilm-stop.json'))
 assert len(data['steps']) == 3, data
 PY
 
+echo "[3b/5] Editor handoff shell"
+curl -fsS "$BASE/?capture=latest" | grep -q "Stepfilm"
+
 echo "[4/5] Invalid input rejection"
 if curl -fsS -X POST "$BASE/api/capture/step" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"image":"not-an-image"}' >/dev/null 2>&1; then
   echo "invalid image was accepted" >&2; exit 1

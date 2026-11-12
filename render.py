@@ -144,10 +144,16 @@ class Renderer:
             image = f"scene.{kind}"
             (folder / image).write_bytes(screenshot)
             self.speech(folder, step["text"], "scene.wav")
-            duration = float(subprocess.check_output([
+            duration_text = subprocess.check_output([
                 self.ffprobe, "-v", "error", "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1", "scene.wav"
-            ], cwd=folder, text=True, timeout=15))
+            ], cwd=folder, text=True, timeout=15).strip()
+            try:
+                duration = float(duration_text)
+            except ValueError as error:
+                raise RuntimeError("Local speech produced no audio. Check macOS speech permissions or use blank narration for a silent scene.") from error
+            if duration <= 0:
+                raise RuntimeError("Local speech produced an empty audio track. Check macOS speech permissions or use blank narration for a silent scene.")
             name = f"scene-{index:02}.mp4"
             self.ff(folder, "-f", "image2", "-pattern_type", "none", "-loop", "1", "-framerate", "24",
                     "-i", image, "-i", "scene.wav",

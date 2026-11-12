@@ -1,7 +1,7 @@
 const get = (id) => document.getElementById(id);
 const ui = Object.fromEntries(
   ["voice", "saveState", "title", "instructions", "open", "openProject", "file", "projectFile", "export", "download", "saveProject",
-   "status", "workspace", "count", "steps", "image", "sceneTitle", "narration", "charCount", "preview", "redact", "marker", "callout", "highlight", "redactionHint", "redactionCanvas", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove"]
+   "status", "workspace", "count", "steps", "image", "sceneTitle", "narration", "charCount", "preview", "redact", "marker", "callout", "highlight", "annotationHint", "redactionHint", "redactionCanvas", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove"]
     .map((id) => [id, get(id)]),
 );
 let guide;
@@ -13,6 +13,8 @@ let previewRequest;
 const STORAGE_KEY = "stepfilm-draft";
 let redacting = false;
 let redactionStart;
+let annotationMode;
+let annotationStart;
 
 function status(message, error = false) {
   ui.status.textContent = message;
@@ -58,12 +60,26 @@ function stopPreview() {
   ui.preview.textContent = "Play narration";
 }
 
+function cancelTools() {
+  annotationMode = undefined;
+  annotationStart = undefined;
+  redacting = false;
+  ui.redact.classList.remove("active");
+  ui.redact.textContent = "Redact pixels";
+  ui.redactionHint.hidden = true;
+  ui.redactionCanvas.style.pointerEvents = "none";
+  ui.image.style.cursor = "default";
+  for (const button of [ui.marker, ui.callout, ui.highlight]) button.classList.remove("active");
+  ui.annotationHint.textContent = "Choose a tool, then place it on the screenshot.";
+}
+
 function stepLabel(index) {
   return guide.steps[index].text.trim() || "Silent step";
 }
 
 function select(index) {
   stopPreview();
+  cancelTools();
   selected = index;
   const step = guide.steps[index];
   ui.image.src = step.image;
@@ -256,7 +272,10 @@ ui.export.addEventListener("click", async () => {
     ui.download.download = `${name || "tutorial"}.mp4`;
     ui.download.hidden = false;
     ui.download.textContent = "Download MP4 again";
-    ui.video.src = `/api/export/latest?ts=${Date.now()}`;
+    // Reuse the response blob for playback. The server intentionally streams
+    // exports as a one-shot POST response and does not expose a stale
+    // `/api/export/latest` file endpoint.
+    ui.video.src = videoUrl;
     ui.video.type = "video/mp4";
     ui.result.hidden = false;
     ui.playbackStatus.textContent = "Loading video preview…";
@@ -290,11 +309,14 @@ ui.copyGuide.addEventListener("click", async () => {
   catch (_) { status("Clipboard access is unavailable in this browser.", true); }
 });
 
-function bakeAnnotation(kind) {
+function imagePoint(event) {
+  const rect = ui.image.getBoundingClientRect();
+  return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) };
+}
+
+function bakeAnnotation(kind, area) {
   if (!guide) return;
-  const label = kind === "marker" ? (window.prompt("Marker label", String(selected + 1)) || "").trim() :
-    kind === "callout" ? (window.prompt("Callout text", guide.steps[selected].text.trim() || "Do this next") || "").trim() : "";
-  if ((kind === "marker" || kind === "callout") && !label) return;
+  const label = kind === "marker" ? String(selected + 1) : (guide.steps[selected].text.trim() || "Do this next");
   const source = new Image();
   source.onload = () => {
     const canvas = document.createElement("canvas");
@@ -304,19 +326,21 @@ function bakeAnnotation(kind) {
     const scale = Math.max(1, canvas.width / 1280);
     context.lineJoin = "round";
     if (kind === "marker") {
-      const x = canvas.width * 0.78, y = canvas.height * 0.22, radius = 30 * scale;
+      const x = canvas.width * area.x, y = canvas.height * area.y, radius = 30 * scale;
       context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5 * scale;
       context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill(); context.stroke();
       context.fillStyle = "#15200e"; context.font = `800 ${28 * scale}px system-ui`; context.textAlign = "center"; context.textBaseline = "middle";
       context.fillText(label.slice(0, 3), x, y);
     } else if (kind === "callout") {
-      const x = canvas.width * 0.06, y = canvas.height * 0.07, width = canvas.width * 0.58, height = 78 * scale;
+      const width = canvas.width * 0.58, height = 78 * scale;
+      const x = Math.max(0, Math.min(canvas.width - width, canvas.width * area.x - width / 2));
+      const y = Math.max(0, Math.min(canvas.height - height, canvas.height * area.y - height / 2));
       context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale;
       context.beginPath(); context.roundRect(x, y, width, height, 12 * scale); context.fill(); context.stroke();
       context.fillStyle = "#15200e"; context.font = `700 ${22 * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "middle";
       context.fillText(label.slice(0, 72), x + 18 * scale, y + height / 2, width - 36 * scale);
     } else {
-      const x = canvas.width * 0.56, y = canvas.height * 0.48, width = canvas.width * 0.28, height = canvas.height * 0.22;
+      const x = canvas.width * area.x, y = canvas.height * area.y, width = canvas.width * area.width, height = canvas.height * area.height;
       context.fillStyle = "rgba(196,244,143,.20)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5 * scale;
       context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
     }
@@ -324,22 +348,53 @@ function bakeAnnotation(kind) {
     ui.image.src = guide.steps[selected].image;
     persist();
     clearVideo();
+    cancelTools();
     status(`${kind === "highlight" ? "Highlight" : kind === "marker" ? "Marker" : "Callout"} added to this scene.`);
   };
   source.src = guide.steps[selected].image;
 }
-ui.marker.addEventListener("click", () => bakeAnnotation("marker"));
-ui.callout.addEventListener("click", () => bakeAnnotation("callout"));
-ui.highlight.addEventListener("click", () => bakeAnnotation("highlight"));
+function chooseAnnotation(kind) {
+  cancelTools();
+  annotationMode = kind;
+  const button = kind === "marker" ? ui.marker : kind === "callout" ? ui.callout : ui.highlight;
+  button.classList.add("active");
+  ui.image.style.cursor = kind === "highlight" ? "crosshair" : "copy";
+  ui.annotationHint.textContent = kind === "highlight" ? "Drag over the area to highlight. Press Esc to cancel." : "Click the part of the screenshot this annotation should explain. Press Esc to cancel.";
+}
+ui.marker.addEventListener("click", () => chooseAnnotation("marker"));
+ui.callout.addEventListener("click", () => chooseAnnotation("callout"));
+ui.highlight.addEventListener("click", () => chooseAnnotation("highlight"));
+
+ui.image.addEventListener("pointerdown", (event) => {
+  if (!annotationMode) return;
+  annotationStart = imagePoint(event);
+  ui.image.setPointerCapture(event.pointerId);
+});
+ui.image.addEventListener("pointerup", (event) => {
+  if (!annotationMode || !annotationStart) return;
+  const end = imagePoint(event);
+  const kind = annotationMode;
+  const start = annotationStart;
+  annotationStart = undefined;
+  if (kind === "highlight") {
+    const area = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) };
+    if (area.width < 0.03 || area.height < 0.03) { status("Drag across a larger area to create a highlight.", true); return; }
+    bakeAnnotation(kind, area);
+  } else {
+    bakeAnnotation(kind, end);
+  }
+});
 
 ui.redact.addEventListener("click", () => {
   if (!guide) return;
+  cancelTools();
   redacting = !redacting;
   ui.redact.classList.toggle("active", redacting);
   ui.redactionHint.hidden = !redacting;
   ui.redactionCanvas.style.pointerEvents = redacting ? "auto" : "none";
   ui.redact.textContent = redacting ? "Done redacting" : "Redact pixels";
 });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") cancelTools(); });
 ui.redactionCanvas.addEventListener("pointerdown", (event) => {
   if (!redacting) return;
   const rect = ui.redactionCanvas.getBoundingClientRect();
