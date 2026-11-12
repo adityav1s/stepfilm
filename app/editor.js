@@ -104,8 +104,8 @@ function renderAnnotations() {
       const angle = Math.atan2(annotation.height, annotation.width) * 180 / Math.PI;
       object.style.transform = `rotate(${angle}deg)`;
       object.style.width = `${Math.max(annotation.width, 0.05) * 100}%`;
-    } else if (annotation.type === "marker") object.textContent = annotation.text || "1";
-    else if (annotation.type === "callout") object.textContent = annotation.text || "Explain this";
+    } else if (annotation.type === "marker") object.textContent = annotation.text || annotation.label || "1";
+    else if (annotation.type === "callout") object.textContent = annotation.text || annotation.label || annotation.content || "Explain this";
     const handle = document.createElement("span"); handle.className = "resize-handle"; handle.title = "Resize annotation"; object.append(handle);
     object.addEventListener("pointerdown", (event) => beginAnnotationDrag(event, annotation.id, event.target === handle));
     ui.annotationLayer.append(object);
@@ -345,7 +345,7 @@ async function flattenStep(step) {
     if (annotation.type === "callout") {
       context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
       context.fillStyle = "#15200e"; context.font = `700 ${Math.max(14, Math.min(22, height / scale * 0.28)) * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "top";
-      const words = (annotation.text || "Explain this").slice(0, 140).split(/\s+/); const lines = []; let line = ""; const maxWidth = Math.max(20, width - 36 * scale);
+      const words = (annotation.text || annotation.label || annotation.content || "Explain this").slice(0, 140).split(/\s+/); const lines = []; let line = ""; const maxWidth = Math.max(20, width - 36 * scale);
       for (const word of words) { const candidate = line ? `${line} ${word}` : word; if (context.measureText(candidate).width > maxWidth && line) { lines.push(line); line = word; } else line = candidate; }
       if (line) lines.push(line); const lineHeight = Math.max(16, height / scale * 0.28) * scale; const maxLines = Math.max(1, Math.floor((height - 20 * scale) / lineHeight));
       lines.slice(0, maxLines).forEach((value, index) => context.fillText(value, x + 18 * scale, y + 10 * scale + index * lineHeight)); continue;
@@ -441,7 +441,7 @@ ui.image.addEventListener("pointerdown", (event) => {
   annotationStart = imagePoint(event);
   ui.image.setPointerCapture(event.pointerId);
 });
-ui.image.addEventListener("pointerup", (event) => {
+function finishAnnotationGesture(event) {
   if (!annotationMode || !annotationStart) return;
   const end = imagePoint(event);
   const kind = annotationMode;
@@ -458,7 +458,9 @@ ui.image.addEventListener("pointerup", (event) => {
     else if (kind === "callout") addAnnotation(kind, { x: Math.max(0, Math.min(0.42, end.x - 0.29)), y: Math.max(0, Math.min(0.88, end.y - 0.06)), width: 0.58, height: 0.12 });
     else addAnnotation(kind, { x: end.x - 0.025, y: end.y - 0.025, width: 0.05, height: 0.05 });
   }
-});
+}
+document.addEventListener("pointerup", finishAnnotationGesture);
+document.addEventListener("pointercancel", () => { annotationStart = undefined; });
 ui.image.addEventListener("click", () => {
   if (annotationMode !== "highlight" || highlightJustBaked) return;
   addAnnotation("highlight", { x: 0.36, y: 0.34, width: 0.28, height: 0.22 });

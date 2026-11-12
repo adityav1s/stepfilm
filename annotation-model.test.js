@@ -11,4 +11,8 @@ assert.equal(annotation.type, "arrow");
 assert.equal(annotation.text, "Target");
 assert(annotation.id.startsWith("annotation-"));
 assert(annotation.x >= 0 && annotation.x <= 1);
+const legacyCallout = normalizeGuide({ title: "Legacy callout", steps: [{ image, text: "", annotations: [{ type: "callout", x: 0.5, y: 0.5, width: 0.05, height: 0.05, label: "Open dashboard" }] }] }).steps[0].annotations[0];
+assert.equal(legacyCallout.text, "Open dashboard");
+assert.equal(legacyCallout.width, 0.58);
+assert.equal(legacyCallout.height, 0.12);
 console.log("annotation model: PASS");

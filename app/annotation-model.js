@@ -11,7 +11,11 @@
     return { schemaVersion: 2, title: String(input.title || "Untitled guide").slice(0, 150), steps: input.steps.map((step) => {
       const sourceImage = step.sourceImage || step.image;
       if (!sourceImage) throw new Error("A step is missing its screenshot.");
-      return { id: step.id || `step-${Math.random().toString(36).slice(2, 10)}`, image: sourceImage, sourceImage, text: String(step.text || "").slice(0, 400), annotations: Array.isArray(step.annotations) ? step.annotations.map((a) => ({ id: a.id || id(), type: a.type || "marker", x: clamp(a.x), y: clamp(a.y), width: clamp(a.width, 0.02, 1), height: clamp(a.height, 0.02, 1), text: String(a.text || "").slice(0, 140) })) : [] };
+      return { id: step.id || `step-${Math.random().toString(36).slice(2, 10)}`, image: sourceImage, sourceImage, text: String(step.text || "").slice(0, 400), annotations: Array.isArray(step.annotations) ? step.annotations.map((a) => {
+        const type = a.type || "marker";
+        const legacySize = type === "callout" && Number(a.width) <= 0.06 && Number(a.height) <= 0.06;
+        return { id: a.id || id(), type, x: legacySize ? clamp(Number(a.x) - 0.265, 0, 0.42) : clamp(a.x), y: legacySize ? clamp(Number(a.y) - 0.06, 0, 0.88) : clamp(a.y), width: legacySize ? 0.58 : clamp(a.width, 0.02, 1), height: legacySize ? 0.12 : clamp(a.height, 0.02, 1), text: String(a.text || a.label || a.content || "").slice(0, 140) };
+      }) : [] };
     }) };
   }
   return { clamp, create, normalizeGuide };
