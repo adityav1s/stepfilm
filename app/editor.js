@@ -112,6 +112,9 @@ function renderAnnotations() {
   }
   updateAnnotationControls();
 }
+function syncAnnotationLayer() {
+  ui.annotationLayer.style.height = `${ui.image.getBoundingClientRect().height}px`;
+}
 function beginAnnotationDrag(event, id, resizing) {
   event.preventDefault(); event.stopPropagation(); selectedAnnotation = id; renderAnnotations();
   const start = { x: event.clientX, y: event.clientY, annotations: snapshotAnnotations() };
@@ -151,6 +154,7 @@ function select(index) {
   ui.redactionCanvas.width = 0;
   ui.redactionCanvas.height = 0;
   renderAnnotations();
+  syncAnnotationLayer();
   for (const [position, item] of [...ui.steps.children].entries()) {
     item.firstChild.setAttribute("aria-current", position === index ? "step" : "false");
   }
@@ -335,10 +339,17 @@ async function flattenStep(step) {
     if (annotation.type === "blur") {
       const crop = document.createElement("canvas"); crop.width = Math.max(1, Math.round(width)); crop.height = Math.max(1, Math.round(height));
       const cropContext = crop.getContext("2d"); cropContext.filter = `blur(${Math.max(10, 18 * scale)}px)`; cropContext.drawImage(canvas, x, y, width, height, 0, 0, crop.width, crop.height);
-      context.drawImage(crop, x, y, width, height); context.strokeStyle = "rgba(255,173,165,.9)"; context.lineWidth = 4 * scale; context.strokeRect(x, y, width, height); continue;
+      context.drawImage(crop, x, y, width, height); context.fillStyle = "rgba(16,24,39,.72)"; context.fillRect(x, y, width, height); context.strokeStyle = "rgba(255,173,165,.9)"; context.lineWidth = 4 * scale; context.strokeRect(x, y, width, height); continue;
     }
     if (annotation.type === "marker") { context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5 * scale; context.beginPath(); context.arc(x + width / 2, y + height / 2, Math.max(12, Math.min(width, height) / 2), 0, Math.PI * 2); context.fill(); context.stroke(); context.fillStyle = "#15200e"; context.font = `800 ${28 * scale}px system-ui`; context.textAlign = "center"; context.textBaseline = "middle"; context.fillText((annotation.text || "1").slice(0, 3), x + width / 2, y + height / 2); continue; }
-    if (annotation.type === "callout") { context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); context.fillStyle = "#15200e"; context.font = `700 ${22 * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "middle"; context.fillText((annotation.text || "Explain this").slice(0, 72), x + 18 * scale, y + height / 2, Math.max(20, width - 36 * scale)); continue; }
+    if (annotation.type === "callout") {
+      context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
+      context.fillStyle = "#15200e"; context.font = `700 ${Math.max(14, Math.min(22, height / scale * 0.28)) * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "top";
+      const words = (annotation.text || "Explain this").slice(0, 140).split(/\s+/); const lines = []; let line = ""; const maxWidth = Math.max(20, width - 36 * scale);
+      for (const word of words) { const candidate = line ? `${line} ${word}` : word; if (context.measureText(candidate).width > maxWidth && line) { lines.push(line); line = word; } else line = candidate; }
+      if (line) lines.push(line); const lineHeight = Math.max(16, height / scale * 0.28) * scale; const maxLines = Math.max(1, Math.floor((height - 20 * scale) / lineHeight));
+      lines.slice(0, maxLines).forEach((value, index) => context.fillText(value, x + 18 * scale, y + 10 * scale + index * lineHeight)); continue;
+    }
     if (annotation.type === "arrow") { context.strokeStyle = "#c4f48f"; context.fillStyle = "#c4f48f"; context.lineWidth = 7 * scale; context.beginPath(); context.moveTo(x, y); context.lineTo(x + width, y + height); context.stroke(); const angle = Math.atan2(height, width); context.beginPath(); context.moveTo(x + width, y + height); context.lineTo(x + width - 22 * scale * Math.cos(angle - Math.PI / 6), y + height - 22 * scale * Math.sin(angle - Math.PI / 6)); context.lineTo(x + width - 22 * scale * Math.cos(angle + Math.PI / 6), y + height - 22 * scale * Math.sin(angle + Math.PI / 6)); context.closePath(); context.fill(); continue; }
     if (annotation.type === "highlight") { context.fillStyle = "rgba(196,244,143,.22)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); }
   }
@@ -403,6 +414,7 @@ function imagePoint(event) {
   const rect = ui.image.getBoundingClientRect();
   return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) };
 }
+ui.image.addEventListener("load", () => { syncAnnotationLayer(); renderAnnotations(); });
 function addAnnotation(type, area) {
   recordAnnotationChange();
   const text = type === "marker" ? String(currentAnnotations().length + 1) : type === "callout" ? (guide.steps[selected].text.trim() || "Explain this") : "";
