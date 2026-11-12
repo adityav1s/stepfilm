@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stepfilm</title>
   <link rel="stylesheet" href="/style.css">
-  <script src="/annotation-model.js" defer></script>
+  <!-- This dependency must execute before the deferred editor bootstrap. -->
+  <script src="/annotation-model.js"></script>
   <script src="/editor.js" defer></script>
 </head>
 <body>

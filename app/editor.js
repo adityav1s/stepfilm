@@ -158,6 +158,7 @@ function select(index) {
 function loadGuide(imported) {
   stopPreview();
   clearVideo();
+  if (!globalThis.StepfilmAnnotations) throw new Error("Stepfilm annotation tools failed to load. Reload the editor after restarting Stepfilm.");
   guide = StepfilmAnnotations.normalizeGuide(imported);
   selectedAnnotation = undefined;
   annotationHistory = [];
@@ -330,7 +331,11 @@ async function flattenStep(step) {
   const scale = Math.max(1, canvas.width / 1280);
   for (const annotation of step.annotations || []) {
     const x = annotation.x * canvas.width, y = annotation.y * canvas.height, width = annotation.width * canvas.width, height = annotation.height * canvas.height;
-    if (annotation.type === "blur") { context.save(); context.filter = `blur(${Math.max(10, 18 * scale)}px)`; context.drawImage(canvas, x, y, width, height, x, y, width, height); context.restore(); context.fillStyle = "rgba(12,17,28,.22)"; context.fillRect(x, y, width, height); continue; }
+    if (annotation.type === "blur") {
+      const crop = document.createElement("canvas"); crop.width = Math.max(1, Math.round(width)); crop.height = Math.max(1, Math.round(height));
+      const cropContext = crop.getContext("2d"); cropContext.filter = `blur(${Math.max(10, 18 * scale)}px)`; cropContext.drawImage(canvas, x, y, width, height, 0, 0, crop.width, crop.height);
+      context.drawImage(crop, x, y, width, height); context.strokeStyle = "rgba(255,173,165,.9)"; context.lineWidth = 4 * scale; context.strokeRect(x, y, width, height); continue;
+    }
     if (annotation.type === "marker") { context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5 * scale; context.beginPath(); context.arc(x + width / 2, y + height / 2, Math.max(12, Math.min(width, height) / 2), 0, Math.PI * 2); context.fill(); context.stroke(); context.fillStyle = "#15200e"; context.font = `800 ${28 * scale}px system-ui`; context.textAlign = "center"; context.textBaseline = "middle"; context.fillText((annotation.text || "1").slice(0, 3), x + width / 2, y + height / 2); continue; }
     if (annotation.type === "callout") { context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3 * scale; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); context.fillStyle = "#15200e"; context.font = `700 ${22 * scale}px system-ui`; context.textAlign = "left"; context.textBaseline = "middle"; context.fillText((annotation.text || "Explain this").slice(0, 72), x + 18 * scale, y + height / 2, Math.max(20, width - 36 * scale)); continue; }
     if (annotation.type === "arrow") { context.strokeStyle = "#c4f48f"; context.fillStyle = "#c4f48f"; context.lineWidth = 7 * scale; context.beginPath(); context.moveTo(x, y); context.lineTo(x + width, y + height); context.stroke(); const angle = Math.atan2(height, width); context.beginPath(); context.moveTo(x + width, y + height); context.lineTo(x + width - 22 * scale * Math.cos(angle - Math.PI / 6), y + height - 22 * scale * Math.sin(angle - Math.PI / 6)); context.lineTo(x + width - 22 * scale * Math.cos(angle + Math.PI / 6), y + height - 22 * scale * Math.sin(angle + Math.PI / 6)); context.closePath(); context.fill(); continue; }
@@ -436,7 +441,9 @@ ui.image.addEventListener("pointerup", (event) => {
     setTimeout(() => { highlightJustBaked = false; }, 0);
     addAnnotation(kind, area);
   } else {
-    addAnnotation(kind, { x: end.x - 0.025, y: end.y - 0.025, width: kind === "arrow" ? 0.22 : 0.05, height: kind === "arrow" ? 0.01 : 0.05 });
+    if (kind === "arrow") addAnnotation(kind, { x: Math.max(0, end.x - 0.22), y: end.y, width: 0.22, height: 0.01 });
+    else if (kind === "callout") addAnnotation(kind, { x: Math.max(0, Math.min(0.42, end.x - 0.29)), y: Math.max(0, Math.min(0.88, end.y - 0.06)), width: 0.58, height: 0.12 });
+    else addAnnotation(kind, { x: end.x - 0.025, y: end.y - 0.025, width: 0.05, height: 0.05 });
   }
 });
 ui.image.addEventListener("click", () => {
