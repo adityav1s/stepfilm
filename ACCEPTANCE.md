@@ -16,6 +16,7 @@ This is the release gate for the next Guidde-like milestone.
 - At least one annotation is baked into the screenshot bytes and remains visible in the exported MP4.
 - The guide preview shows every step with a number, screenshot, and written instruction; at least four of five representative steps communicate the intended action without extra explanation.
 - With AI configured, Draft tutorial generates an editable title, distinct step descriptions, imperative instructions, and correctly targeted callouts from screenshots. Manual authored text is never overwritten without confirmation; video-only steps are explicitly reported as skipped.
+- Continue with ChatGPT completes dynamic registration, PKCE, scope and nonce validation, securely stores refreshable credentials, and uses the selected ChatGPT plan for text/image Responses API actions. Each run respects the chosen provider; ChatGPT-plan access never silently falls back to paid API billing. Disconnect removes its local credential record.
 - Audio/video narration upload produces an editable full transcript that survives save/reopen and appears in HTML/Markdown exports. All narrated steps can generate, preview, save, and export AI voiceovers; steps without AI audio continue to use local speech.
 - When the AI TTS request is rejected, the editor offers a one-click local speech selection. Text and voice settings remain intact; local export must ignore any stale AI clip and produce a playable audio track.
 - Three consecutive exports produce playable 1280×720 H.264/AAC MP4 files; failed export preserves the editable draft.
@@ -24,7 +25,7 @@ This is the release gate for the next Guidde-like milestone.
 
 ## Not required yet
 
-Hosted links, teams, analytics, native desktop/mobile apps, camera/system audio, direct integrations, slide PDF, true forced word-level alignment, and native phone capture are later phases. The transcription fallback now requests Whisper-provided word timestamps where available; this is timestamped recognition, not forced alignment. Realtime TTS is available as an opt-in provider, with mocked protocol coverage; live API generation remains unverified. AI authoring, captured-mic transcription, translation, video analysis, and generated voiceover are optional OpenAI-backed features; media is sent only when the creator invokes those actions.
+Hosted links, teams, analytics, native desktop/mobile apps, camera/system audio, direct integrations, slide PDF, true forced word-level alignment, and native phone capture are later phases. The transcription fallback now requests Whisper-provided word timestamps where available; this is timestamped recognition, not forced alignment. Realtime TTS is available as an opt-in provider, with mocked protocol coverage; live API generation remains unverified. ChatGPT-plan sign-in covers text and image Responses API tasks, not audio transcription or speech endpoints; verify a live eligible account and capture the usage-limit path manually.
 
 ## Automated gate
 

@@ -1,7 +1,7 @@
 const get = (id) => document.getElementById(id);
 const ui = Object.fromEntries(
   ["voice", "saveState", "title", "instructions", "open", "openProject", "file", "projectFile", "export", "download", "saveProject", "downloadGuide", "printGuide", "printDisclosure", "downloadMarkdown", "shareGuide", "shareDisclosure", "exportScorm", "scormDisclosure",
-   "status", "workspace", "count", "steps", "bulkActions", "bulkCount", "bulkMoveUp", "bulkMoveDown", "bulkDuplicate", "bulkDelete", "image", "clipStepPreview", "sceneTitle", "narration", "stepDescription", "videoAnalysisPane", "videoAnalysis", "videoAnalysisCoverage", "aiAnalyzeVideo", "charCount", "voicePace", "voiceInstructions", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationTools", "focusTools", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "captionPreview", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove", "focus", "focusZoom", "focusZoomValue", "focusReset", "focusHint", "clipLibrary", "capturedClipPreview", "insertClip", "mobileVideoFile", "importMobileVideo", "aiSetup", "aiDraft", "transcribeButton", "transcribeCapture", "transcriptFile", "transcript", "transcriptHint", "captionLanguage", "translateCaptions", "downloadVtt", "downloadSrt", "captionEditorPane", "captionEditor", "addCaption", "recordedNarration", "playRecordedStep", "audioSourceControls", "audioSource", "useLocalVoice", "aiVoice", "aiVoiceover", "aiVoiceoverAll", "playAiVoice", "brandTheme", "brandAccent", "brandTitleStyle", "brandLogo", "clearBrandLogo"]
+   "status", "workspace", "count", "steps", "bulkActions", "bulkCount", "bulkMoveUp", "bulkMoveDown", "bulkDuplicate", "bulkDelete", "image", "clipStepPreview", "sceneTitle", "narration", "stepDescription", "videoAnalysisPane", "videoAnalysis", "videoAnalysisCoverage", "aiAnalyzeVideo", "charCount", "voicePace", "voiceInstructions", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationTools", "focusTools", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "captionPreview", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove", "focus", "focusZoom", "focusZoomValue", "focusReset", "focusHint", "clipLibrary", "capturedClipPreview", "insertClip", "mobileVideoFile", "importMobileVideo", "aiSetup", "aiConnectDialog", "aiConnectionInfo", "closeAiConnect", "connectChatGPT", "connectApiKey", "disconnectChatGPT", "aiDraft", "transcribeButton", "transcribeCapture", "transcriptFile", "transcript", "transcriptHint", "captionLanguage", "translateCaptions", "downloadVtt", "downloadSrt", "captionEditorPane", "captionEditor", "addCaption", "recordedNarration", "playRecordedStep", "audioSourceControls", "audioSource", "useLocalVoice", "aiVoice", "aiVoiceover", "aiVoiceoverAll", "playAiVoice", "brandTheme", "brandAccent", "brandTitleStyle", "brandLogo", "clearBrandLogo"]
     .map((id) => [id, get(id)]),
 );
 let guide;
@@ -732,12 +732,56 @@ ui.translateCaptions.addEventListener("click", async () => {
   finally { syncCaptionControls(); }
 });
 
-ui.aiSetup.addEventListener("click", async () => {
-  const key = prompt("OpenAI API key (kept in Stepfilm memory until the server stops):", "");
-  if (key === null) return;
-  try { await api("/api/ai/configure", { apiKey: key }); status(key ? "AI connected for this Stepfilm session." : "AI disconnected."); }
-  catch (error) { status(error.message, true); }
+ui.aiSetup.addEventListener("click", () => { ui.aiConnectDialog.hidden = false; ui.connectChatGPT.focus(); });
+ui.closeAiConnect.addEventListener("click", () => { ui.aiConnectDialog.hidden = true; ui.aiSetup.focus(); });
+ui.aiConnectDialog.addEventListener("click", (event) => { if (event.target === ui.aiConnectDialog) ui.aiConnectDialog.hidden = true; });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !ui.aiConnectDialog.hidden) ui.aiConnectDialog.hidden = true; });
+ui.connectChatGPT.addEventListener("click", async () => {
+  const popup = window.open("about:blank", "stepfilm-chatgpt-signin");
+  if (!popup) { status("Allow pop-ups for Stepfilm, then choose Continue with ChatGPT again.", true); return; }
+  ui.connectChatGPT.disabled = true; ui.connectChatGPT.textContent = "Opening ChatGPT…";
+  try {
+    const response = await api("/api/chatgpt/start", {});
+    const result = await response.json();
+    popup.location.href = result.authorizationUrl;
+    ui.aiConnectDialog.hidden = true;
+    status("Finish the ChatGPT sign-in and allow Stepfilm to use your plan. No API key is needed.");
+  } catch (error) { popup.close(); status(error.message, true); }
+  finally { ui.connectChatGPT.disabled = false; ui.connectChatGPT.textContent = "Continue with ChatGPT"; }
 });
+ui.connectApiKey.addEventListener("click", async () => {
+  const key = prompt("OpenAI API key (billed separately from your ChatGPT plan; held in Stepfilm memory until the server stops):", "");
+  if (key === null) return;
+  try {
+    await api("/api/ai/configure", { apiKey: key });
+    ui.aiConnectDialog.hidden = true;
+    status(key ? "API key connected for this Stepfilm session." : "API key disconnected.");
+    refreshAiConnectionStatus();
+  } catch (error) { status(error.message, true); }
+});
+ui.disconnectChatGPT.addEventListener("click", async () => {
+  try {
+    await api("/api/chatgpt/disconnect", {});
+    status("ChatGPT plan disconnected from Stepfilm.");
+    refreshAiConnectionStatus();
+  } catch (error) { status(error.message, true); }
+});
+window.addEventListener("message", (event) => {
+  if (event.origin !== window.location.origin || event.data?.type !== "stepfilm-chatgpt-connected") return;
+  refreshAiConnectionStatus();
+  status("ChatGPT connected. Tutorial drafts, video-frame analysis, and caption translation use your eligible plan allowance.");
+});
+
+async function refreshAiConnectionStatus() {
+  try {
+    const response = await api("/api/status");
+    const { aiConfigured, apiKeyConfigured, aiProvider, chatgptPlan } = await response.json();
+    ui.aiSetup.textContent = aiProvider === "chatgpt" ? "AI · ChatGPT plan" : aiProvider === "api_key" ? "AI · API key" : "Connect AI";
+    ui.aiConnectionInfo.textContent = aiProvider === "chatgpt" ? "Currently using your ChatGPT plan allowance for text and image AI actions." : aiProvider === "api_key" ? "Currently using an OpenAI API key; API usage is billed separately." : "No AI provider is currently selected.";
+    ui.aiSetup.classList.toggle("primary", Boolean(aiConfigured));
+    ui.disconnectChatGPT.hidden = !chatgptPlan?.connected;
+  } catch (_) {}
+}
 ui.aiAnalyzeVideo.addEventListener("click", async () => {
   const step = guide?.steps?.[selected];
   if (step?.kind !== "video") { status("Select a video step to analyze.", true); return; }
@@ -1170,9 +1214,9 @@ ui.redactionCanvas.addEventListener("pointerup", (event) => {
   image.src = guide.steps[selected].image;
 });
 
-api("/api/status").then((response) => response.json()).then(({ voice, aiConfigured }) => {
+api("/api/status").then((response) => response.json()).then(({ voice }) => {
   ui.voice.textContent = `Local voice · ${voice}`;
-  ui.aiSetup.textContent = aiConfigured ? "AI connected" : "Connect AI";
+  refreshAiConnectionStatus();
 }).catch((error) => status(error.message, true));
 
 const captureLatest = new URLSearchParams(location.search).get("capture") === "latest";

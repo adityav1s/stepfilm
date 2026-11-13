@@ -212,7 +212,13 @@ def chatgpt_responses_text(plan, messages):
 def ai_json_response(server, payload):
     """Use an API key if configured; otherwise use ChatGPT plan text/image access."""
     key = server.openai_api_key
-    if key:
+    provider = getattr(server, "ai_provider", "")
+    if provider == "api_key" and key:
+        response = json.loads(server.openai_call("https://api.openai.com/v1/chat/completions", key, payload))
+        content = response["choices"][0]["message"]["content"]
+    elif provider == "chatgpt" and server.chatgpt_plan.status()["connected"]:
+        content = chatgpt_responses_text(server.chatgpt_plan, payload.get("messages", []))
+    elif key and not server.chatgpt_plan.status()["connected"]:
         response = json.loads(server.openai_call("https://api.openai.com/v1/chat/completions", key, payload))
         content = response["choices"][0]["message"]["content"]
     elif server.chatgpt_plan.status()["connected"]:
@@ -583,6 +589,7 @@ class Handler(BaseHTTPRequestHandler):
                     message = "Sign-in was cancelled. Return to Stepfilm and try again if you want to connect."
                 else:
                     result = self.server.chatgpt_plan.finish(query.get("code", [""])[0], query.get("state", [""])[0], query.get("client_id", [None])[0])
+                    self.server.ai_provider = "chatgpt"
                     message = "ChatGPT plan connected" + (f" for {result['email']}" if result.get("email") else "") + ". You can close this tab and return to Stepfilm."
                 status = 200
             except (RuntimeError, ValueError) as error:
@@ -600,7 +607,8 @@ class Handler(BaseHTTPRequestHandler):
             voice = self.server.renderer.engine if self.server.renderer else "Unavailable — install FFmpeg"
             plan_status = self.server.chatgpt_plan.status()
             self.json(200, {"voice": voice, "aiConfigured": bool(self.server.openai_api_key or plan_status["connected"]),
-                            "apiKeyConfigured": bool(self.server.openai_api_key), "chatgptPlan": plan_status})
+                            "apiKeyConfigured": bool(self.server.openai_api_key), "aiProvider": self.server.ai_provider,
+                            "chatgptPlan": plan_status})
         elif path == "/api/capture/latest":
             if self.server.capture_latest is None:
                 self.json(404, {"error": "No captured workflow is waiting in Stepfilm."})
@@ -758,6 +766,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(key, str) or (key and not key.startswith("sk-")):
                     raise ValueError("Enter a valid OpenAI API key, or leave it blank to disconnect.")
                 self.server.openai_api_key = key.strip()
+                self.server.ai_provider = "api_key" if self.server.openai_api_key else ("chatgpt" if self.server.chatgpt_plan.status()["connected"] else "")
                 self.json(200, {"configured": bool(self.server.openai_api_key)})
                 return
             if self.path == "/api/chatgpt/start":
@@ -767,6 +776,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/chatgpt/disconnect":
                 self.server.chatgpt_plan.disconnect()
+                self.server.ai_provider = "api_key" if self.server.openai_api_key else ""
                 self.json(200, {"connected": False})
                 return
             if self.path == "/api/ai/draft":
@@ -857,7 +867,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(200, {"language": language, "translations": [text.strip()[:1000] for text in translations]})
                 return
             if self.path == "/api/ai/voice":
-                key = self.server.openai_api_key
+                key = self.server.openai_api_key if self.server.ai_provider == "api_key" else ""
                 if not key: raise RuntimeError("ChatGPT plan access covers text and image tools, not AI voice generation. Connect an API key or use local speech for this step.")
                 text, voice = body.get("text", ""), body.get("voice", "coral")
                 if not isinstance(text, str) or not 1 <= len(text.strip()) <= 400: raise ValueError("Enter narration of 1–400 characters before generating voiceover.")
@@ -881,7 +891,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, "audio/mpeg", audio)
                 return
             if self.path == "/api/ai/transcribe":
-                key = self.server.openai_api_key
+                key = self.server.openai_api_key if self.server.ai_provider == "api_key" else ""
                 if not key: raise RuntimeError("ChatGPT plan access does not include the audio transcription endpoint. Connect an API key, or add captions manually and use local speech.")
                 filename, payload = body.get("filename", "recording.webm"), body.get("audio", "")
                 if not isinstance(filename, str) or not isinstance(payload, str) or not payload.startswith("data:"): raise ValueError("Choose an audio or video recording to transcribe.")
@@ -896,7 +906,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(200, {"text": json.loads(transcript).get("text", "")})
                 return
             if self.path == "/api/ai/transcribe-capture":
-                key = self.server.openai_api_key
+                key = self.server.openai_api_key if self.server.ai_provider == "api_key" else ""
                 if not key: raise RuntimeError("ChatGPT plan access does not include the audio transcription endpoint. Connect an API key, or add captions manually.")
                 capture_id = body.get("captureId", "")
                 audio_path = self.server.capture_media_dir / f"{capture_id}.narration.webm"
@@ -1257,6 +1267,7 @@ def main():
             server.origin = f"http://127.0.0.1:{server.server_port}"
             server.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
             server.chatgpt_plan = ChatGPTPlan()
+            server.ai_provider = "chatgpt" if server.chatgpt_plan.status()["connected"] else ("api_key" if server.openai_api_key else "")
             server.openai_tts_provider = os.environ.get("STEPFILM_TTS_PROVIDER", "speech").strip().lower()
             if server.openai_tts_provider not in {"speech", "realtime"}:
                 parser.exit(2, "STEPFILM_TTS_PROVIDER must be 'speech' or 'realtime'.\n")

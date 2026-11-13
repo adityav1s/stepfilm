@@ -1,2 +1,3 @@
 Pillow>=10.0
 websockets>=14,<16
+PyJWT[crypto]>=2.10,<3

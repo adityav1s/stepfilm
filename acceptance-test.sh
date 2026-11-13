@@ -18,6 +18,7 @@ node "$ROOT/guide-export.test.js"
 python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$ROOT/capture-extension/manifest.json"
 python3 "$ROOT/video-step.test.py"
 python3 "$ROOT/realtime-tts.test.py"
+python3 "$ROOT/chatgpt-plan.test.py"
 python3 "$ROOT/caption-timeline.test.py"
 python3 "$ROOT/caption-chunking.test.py"
 python3 "$ROOT/caption-route.test.py"
@@ -27,6 +28,21 @@ python3 "$ROOT/mobile-import.test.py"
 
 echo "[2/5] Server health"
 curl -fsS "$BASE/api/status" >/tmp/stepfilm-status.json
+curl -fsS -X POST "$BASE/api/chatgpt/start" -H "Origin: $BASE" -H 'Content-Type: application/json' --data '{}' >/tmp/stepfilm-chatgpt-start.json
+python3 - <<'PY'
+import json
+from urllib.parse import parse_qs, urlsplit
+url=json.load(open('/tmp/stepfilm-chatgpt-start.json'))['authorizationUrl']
+parts=urlsplit(url)
+query=parse_qs(parts.query)
+assert parts.scheme == 'https' and parts.netloc == 'auth.openai.com'
+assert query['client_id'] == ['dynamic_agent_client']
+assert query['agent_name_hint'] == ['Stepfilm']
+assert query['redirect_uri'][0].startswith('http://127.0.0.1:')
+assert 'chatgpt.tokens.use.direct' in query['scope'][0]
+assert query['code_challenge_method'] == ['S256']
+PY
+curl -fsS "$BASE/chatgpt-callback.js" | rg -q 'stepfilm-chatgpt-connected'
 
 echo "[3/5] Capture API lifecycle"
 ORIGIN="$BASE"

@@ -47,6 +47,7 @@ def begin_chatgpt_signin(redirect_uri, host_id, client_id=None, id_token_hint=No
     return OAUTH_AUTHORIZE + "?" + urlencode(params), {
         "state": state, "nonce": nonce, "verifier": verifier,
         "redirect_uri": redirect_uri, "client_id": client_id,
+        "expires_at": time.time() + 600,
     }
 
 
@@ -178,10 +179,12 @@ class ChatGPTPlan:
     def finish(self, code, state, callback_client_id=None):
         pending = self.pending
         self.pending = None
-        if not pending or not secrets.compare_digest(str(state), pending["state"]):
+        if not pending or pending.get("expires_at", 0) < time.time() or not secrets.compare_digest(str(state), pending["state"]):
             raise ValueError("ChatGPT sign-in expired or could not be verified. Start again.")
         issued = callback_client_id if pending["client_id"] == "dynamic_agent_client" else pending["client_id"]
         credentials = exchange_chatgpt_code(code, issued, pending, callback_client_id)
+        if self.credentials and self.credentials.get("client_id") == credentials["client_id"] and self.credentials.get("subject") != credentials.get("subject"):
+            raise RuntimeError("ChatGPT signed in as a different account than this Stepfilm connection. Disconnect and start a new registration if you want to switch accounts.")
         credentials["host_id"] = self.host_id
         self._atomic_write(self.credentials_path, json.dumps(credentials).encode())
         self.credentials = credentials
@@ -190,7 +193,7 @@ class ChatGPTPlan:
     def cancel(self, state):
         pending = self.pending
         self.pending = None
-        if not pending or not secrets.compare_digest(str(state), pending["state"]):
+        if not pending or pending.get("expires_at", 0) < time.time() or not secrets.compare_digest(str(state), pending["state"]):
             raise ValueError("ChatGPT sign-in expired or could not be verified. Start again.")
 
     def access_token(self):
