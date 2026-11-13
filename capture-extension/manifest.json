@@ -2,10 +2,11 @@
   "manifest_version": 3,
   "name": "Stepfilm Capture",
   "version": "0.1.0",
-  "description": "Capture ordered browser screenshots into a local Stepfilm guide.",
-  "permissions": ["activeTab", "tabs", "scripting", "storage"],
+  "description": "Capture ordered browser screenshots and continuous tab video into a local Stepfilm guide.",
+  "permissions": ["activeTab", "tabs", "scripting", "storage", "tabCapture", "desktopCapture", "offscreen"],
   "host_permissions": ["http://127.0.0.1:8765/*", "http://*/*", "https://*/*"],
   "action": { "default_popup": "popup.html" },
+  "web_accessible_resources": [{ "resources": ["offscreen.html"], "matches": ["<all_urls>"] }],
   "background": { "service_worker": "background.js" },
   "content_scripts": [{ "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_idle" }]
 }

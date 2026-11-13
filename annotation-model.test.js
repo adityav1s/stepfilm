@@ -6,6 +6,37 @@ const guide = normalizeGuide({ title: "Legacy", steps: [{ image, text: "Click ta
 assert.equal(guide.schemaVersion, 2);
 assert.equal(guide.steps[0].sourceImage, image);
 assert.deepEqual(guide.steps[0].annotations, []);
+assert.deepEqual(guide.steps[0].focus, { x: 0.5, y: 0.5, scale: 1 });
+const duplicateIds = normalizeGuide({ title: "Duplicate IDs", steps: [{ id: "same", image, text: "First" }, { id: "same", image, text: "Second" }] }).steps;
+assert.notEqual(duplicateIds[0].id, duplicateIds[1].id, "normalized scene IDs are unique, including legacy duplicates");
+const directed = normalizeGuide({ title: "Voice", steps: [{ image, text: "Open the page", voicePace: "slower", voiceInstructions: "Say API as A P I." }] }).steps[0];
+assert.equal(directed.voicePace, "slower", "voice pace persists in the editable guide model");
+assert.equal(directed.voiceInstructions, "Say API as A P I.", "voice direction persists in the editable guide model");
+const boundedDirection = normalizeGuide({ title: "Voice", steps: [{ image, text: "Open the page", voicePace: "wild", voiceInstructions: "x".repeat(400) }] }).steps[0];
+assert.equal(boundedDirection.voicePace, "natural", "unknown pace falls back safely");
+assert.equal(boundedDirection.voiceInstructions.length, 300, "voice direction is bounded during project normalization");
+assert.equal(normalizeGuide({ title: "Local", steps: [{ image, text: "Keep narration", audioSource: "local" }] }).steps[0].audioSource, "local", "local fallback choice persists");
+assert.equal(normalizeGuide({ title: "Legacy local", steps: [{ image, text: "Keep narration", audioSource: "synthetic" }] }).steps[0].audioSource, "local", "legacy steps without an AI audio asset safely use local speech");
+const aiAudio = normalizeGuide({ title: "AI source", steps: [{ image, text: "Keep narration", audioSource: "synthetic", voiceover: "data:audio/mpeg;base64,AA==" }] }).steps[0];
+assert.equal(aiAudio.audioSource, "synthetic", "a saved AI voice track retains its selected source");
+const clipId = "0123456789abcdef0123456789abcdef";
+const mixed = normalizeGuide({ title: "Mixed", capturedClips: [{ id: clipId, label: "Continuous recording" }], steps: [
+  { image, text: "Click target" }, { kind: "video", videoId: clipId, recordedAudioId: clipId, text: "Show the transition" }
+] });
+assert.equal(mixed.steps[0].kind, undefined, "legacy screenshots remain image steps");
+assert.equal(mixed.steps[1].kind, "video");
+assert.equal(mixed.steps[1].videoUrl, `/api/media/${clipId}`);
+assert.equal(mixed.steps[1].recordedAudioId, clipId, "video project steps retain their own extracted audio reference");
+assert.equal(mixed.capturedClips[0].url, `/api/media/${clipId}`);
+const focused = normalizeGuide({ title: "Focused", steps: [{ image, text: "Zoom in", focus: { x: 1.4, y: -0.2, scale: 4 } }] }).steps[0].focus;
+assert.deepEqual(focused, { x: 1, y: 0, scale: 2.4 });
+const translated = normalizeGuide({ title: "Captions", steps: [{ image, text: "Open settings", captions: [{ start: 1.25, end: 2.5, text: "Open settings", translations: { es: "Abre la configuración", invalid: "bad" } }] }] }).steps[0].captions[0];
+assert.equal(translated.text, "Open settings");
+assert.equal(translated.start, 1.25);
+assert.equal(translated.end, 2.5);
+assert.deepEqual(translated.translations, { es: "Abre la configuración" }, "translations must preserve original cue text and timestamps");
+const branded = normalizeGuide({ title: "Brand", brand: { theme: "editorial", accent: "#aa7711", titleStyle: "display", logo: "data:image/png;base64,AAA" }, steps: [{ image, text: "Next" }] }).brand;
+assert.deepEqual(branded, { theme: "editorial", accent: "#aa7711", titleStyle: "display", logo: "data:image/png;base64,AAA" });
 const annotation = create("arrow", 0.2, 0.3, 0.4, 0.01, "Target");
 assert.equal(annotation.type, "arrow");
 assert.equal(annotation.text, "Target");

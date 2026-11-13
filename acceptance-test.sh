@@ -11,8 +11,19 @@ node --check "$ROOT/app/editor.js"
 node --check "$ROOT/capture-extension/popup.js"
 node --check "$ROOT/capture-extension/background.js"
 node --check "$ROOT/capture-extension/content.js"
+node --check "$ROOT/capture-extension/offscreen.js"
 node "$ROOT/annotation-model.test.js"
+node "$ROOT/step-selection.test.js"
+node "$ROOT/guide-export.test.js"
 python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$ROOT/capture-extension/manifest.json"
+python3 "$ROOT/video-step.test.py"
+python3 "$ROOT/realtime-tts.test.py"
+python3 "$ROOT/caption-timeline.test.py"
+python3 "$ROOT/caption-chunking.test.py"
+python3 "$ROOT/caption-route.test.py"
+python3 "$ROOT/video-analysis.test.py"
+python3 "$ROOT/share-export.test.py"
+python3 "$ROOT/mobile-import.test.py"
 
 echo "[2/5] Server health"
 curl -fsS "$BASE/api/status" >/tmp/stepfilm-status.json
@@ -34,11 +45,73 @@ PY
 echo "[3b/5] Editor handoff shell"
 curl -fsS "$BASE/?capture=latest" | grep -q "Stepfilm"
 
+echo "[3c/5] Continuous clip chunk lifecycle"
+python3 - "$BASE" <<'PY'
+import io, json, shutil, subprocess, sys, tempfile, urllib.error, urllib.request, zipfile, xml.etree.ElementTree as ET
+from pathlib import Path
+base = sys.argv[1]
+ffmpeg = shutil.which("ffmpeg")
+ffprobe = shutil.which("ffprobe")
+if not ffmpeg or not ffprobe:
+    print("continuous clip lifecycle: SKIP (FFmpeg unavailable)")
+    raise SystemExit(0)
+origin = base
+def post(path, body, content_type="application/json"):
+    data = body if isinstance(body, bytes) else json.dumps(body).encode()
+    request = urllib.request.Request(base + path, data=data, headers={"Origin": origin, "Content-Type": content_type}, method="POST")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read())
+started = post("/api/capture/start", {"title": "Desktop workflow", "recording": True, "narration": True, "captureMode": "desktop"})
+capture_id = started["captureId"]
+with urllib.request.urlopen(base + "/api/capture/status", timeout=10) as response:
+    assert json.loads(response.read())["captureMode"] == "desktop"
+png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+post("/api/capture/step", {"captureId": capture_id, "image": png})
+with tempfile.TemporaryDirectory() as temp:
+    raw = Path(temp) / "live.webm"
+    subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=24", "-f", "lavfi", "-i", "sine=frequency=660:duration=2.2", "-t", "2.2", "-c:v", "libvpx-vp9", "-c:a", "libopus", "-live", "1", "-f", "webm", str(raw)], check=True, capture_output=True, timeout=60)
+    live_bytes = raw.read_bytes()
+post(f"/api/capture/chunk?captureId={capture_id}&index=0", live_bytes, "application/octet-stream")
+post("/api/capture/recording/finish", {"captureId": capture_id, "chunks": 1})
+guide = post("/api/capture/stop", {"captureId": capture_id})
+assert len(guide["steps"]) == 1
+assert guide["capturedClips"][0]["id"] == capture_id
+assert guide["narrationAudioId"] == capture_id, guide
+with urllib.request.urlopen(base + guide["capturedClips"][0]["url"], timeout=30) as response:
+    finalized_bytes = response.read()
+    assert finalized_bytes.startswith(b"\x1a\x45\xdf\xa3")
+    finalized = Path(tempfile.gettempdir()) / "stepfilm-api-finalized.webm"
+    finalized.write_bytes(finalized_bytes)
+    metadata = json.loads(subprocess.check_output([ffprobe, "-v", "error", "-show_format", "-of", "json", str(finalized)], text=True, timeout=30))
+    assert float(metadata["format"]["duration"]) >= 2.0, metadata
+    finalized.unlink(missing_ok=True)
+with urllib.request.urlopen(base + guide["narrationAudioUrl"], timeout=30) as response:
+    audio_file = Path(tempfile.gettempdir()) / "stepfilm-api-narration.webm"
+    audio_file.write_bytes(response.read())
+    audio_metadata = json.loads(subprocess.check_output([ffprobe, "-v", "error", "-show_streams", "-of", "json", str(audio_file)], text=True, timeout=30))
+    assert any(stream["codec_type"] == "audio" for stream in audio_metadata["streams"]), audio_metadata
+    audio_file.unlink(missing_ok=True)
+share_html = f'<!doctype html><html><body><video controls src="media/{capture_id}.webm"><track kind="captions" src="captions/step-1-en.vtt" srclang="en"></video></body></html>'
+share_payload = json.dumps({"title": "Portable workflow", "html": share_html, "mediaSteps": [{"videoId": capture_id, "stepNumber": 1, "captionTracks": [{"language": "en", "cues": [{"start": 0, "end": 1, "text": "Start here"}]}]}]}).encode()
+share_request = urllib.request.Request(base + "/api/export/share", data=share_payload, headers={"Origin": origin, "Content-Type": "application/json"}, method="POST")
+with urllib.request.urlopen(share_request, timeout=30) as response, zipfile.ZipFile(io.BytesIO(response.read())) as archive:
+    assert {"index.html", f"media/{capture_id}.webm", "captions/step-1-en.vtt"} == set(archive.namelist())
+scorm_request = urllib.request.Request(base + "/api/export/scorm", data=share_payload, headers={"Origin": origin, "Content-Type": "application/json"}, method="POST")
+with urllib.request.urlopen(scorm_request, timeout=30) as response, zipfile.ZipFile(io.BytesIO(response.read())) as archive:
+    assert {"imsmanifest.xml", "index.html", f"media/{capture_id}.webm", "captions/step-1-en.vtt"} == set(archive.namelist())
+    manifest = ET.fromstring(archive.read("imsmanifest.xml"))
+    assert manifest.tag == "{http://www.imsproject.org/xsd/imscp_rootv1p1p2}manifest"
+    resource = manifest.find(".//{http://www.imsproject.org/xsd/imscp_rootv1p1p2}resource")
+    assert resource.attrib["{http://www.adlnet.org/xsd/adlcp_rootv1p2}scormtype"] == "sco"
+    assert "LMSInitialize" in archive.read("index.html").decode("utf-8")
+print("continuous clip lifecycle: PASS")
+PY
+
 echo "[4/5] Invalid input rejection"
 if curl -fsS -X POST "$BASE/api/capture/step" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"image":"not-an-image"}' >/dev/null 2>&1; then
   echo "invalid image was accepted" >&2; exit 1
 fi
 
 echo "[5/5] Threshold result"
-echo "AUTOMATED PASS: syntax, manifest, health, 3-step capture lifecycle, and invalid-image rejection"
-echo "MANUAL REQUIRED: 3 consecutive Chrome runs, annotation visibility, redaction, comprehension, and 3 playable exports"
+echo "AUTOMATED PASS: syntax, manifest, health, screenshot capture, finalized chunked WebM lifecycle, mixed video rendering, and invalid-image rejection"
+echo "MANUAL REQUIRED: 3 consecutive Chrome runs, popup recovery, uninterrupted recording, clip insertion/order, annotation visibility, redaction, comprehension, and 3 playable exports"

@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="/style.css">
   <!-- This dependency must execute before the deferred editor bootstrap. -->
   <script src="/annotation-model.js"></script>
+  <script src="/step-selection.js"></script>
+  <script src="/guide-export.js"></script>
   <script src="/editor.js" defer></script>
 </head>
 <body>
@@ -23,31 +25,56 @@
         <span>1. Start capture in the Chrome extension</span>
         <span>2. Perform each browser action</span>
         <span>3. Stop capture to open the editor</span>
-        <small>Already have a Mimik HTML export? Use <b>Import HTML guide</b> below.</small>
+        <small>Already have a Mimik HTML export? Use <b>Import HTML guide</b> below, or transfer and import a phone recording.</small>
       </div>
       <div class="actions">
         <button id="open">Import HTML guide</button>
+        <button id="importMobileVideo" class="button" type="button">Import phone video</button>
+        <input id="mobileVideoFile" type="file" accept="video/*" hidden>
         <button id="openProject">Open project</button>
         <input id="file" type="file" accept=".html,.htm,text/html" hidden>
         <input id="projectFile" type="file" accept=".stepfilm.json,application/json" hidden>
         <button id="export" class="primary" hidden>Export MP4</button>
+        <button id="aiSetup" class="button">Connect AI</button>
         <a id="download" class="button" hidden>Download again</a>
         <button id="saveProject" class="button" hidden>Save project</button>
+        <button id="downloadGuide" class="button" hidden>Export HTML guide</button>
+        <button id="printGuide" class="button" hidden>Print / Save as PDF</button>
+        <small id="printDisclosure" hidden>Opens a print-ready guide in a new tab; choose Save as PDF in the browser dialog.</small>
+        <button id="downloadMarkdown" class="button" hidden>Export Markdown</button>
+        <button id="shareGuide" class="button" hidden>Export portable guide ZIP</button>
+        <button id="exportScorm" class="button" hidden>Export SCORM 1.2 package</button>
       </div>
+      <small id="shareDisclosure" hidden>Portable ZIP bundles guide media for you to share manually. Stepfilm does not create a hosted link or manage access.</small>
+      <small id="scormDisclosure" hidden>SCORM 1.2 package for LMS upload; learners mark completion inside the course. This does not connect directly to third-party platforms.</small>
       <p id="status" role="status" aria-live="polite"></p>
     </section>
     <section id="workspace" class="workspace" hidden aria-label="Guide editor">
+      <section class="ai-toolbar" aria-label="AI tutorial tools"><div><strong>AI tutorial draft</strong><small>Uses guide screenshots to draft the title, step descriptions, instructions and visual callouts. Analyze video scenes one at a time.</small></div><div class="ai-controls"><button id="aiDraft" class="primary">Draft tutorial</button><button id="aiAnalyzeVideo" class="button" hidden>Analyze this video step</button><button id="transcribeCapture" class="button" hidden>Transcribe captured narration</button><button id="transcribeButton" class="button">Transcribe audio/video file</button><input id="transcriptFile" type="file" accept="audio/*,video/mp4,video/webm" hidden><select id="captionLanguage" aria-label="Caption translation language"><option value="" selected>Original captions</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option></select><button id="translateCaptions" class="button" hidden>Translate captions</button><button id="downloadVtt" class="button" hidden>Download VTT captions</button><button id="downloadSrt" class="button" hidden>Download SRT captions</button><select id="aiVoice" aria-label="AI voice"><option value="coral">Coral</option><option value="alloy">Alloy</option><option value="ash">Ash</option><option value="ballad">Ballad</option><option value="echo">Echo</option><option value="fable">Fable</option><option value="marin">Marin</option><option value="nova">Nova</option><option value="onyx">Onyx</option><option value="sage">Sage</option><option value="cedar">Cedar</option><option value="shimmer">Shimmer</option><option value="verse">Verse</option></select><button id="aiVoiceover" class="button">Generate AI voiceover for this step</button><button id="aiVoiceoverAll" class="button">Generate voiceover for all steps</button></div><label for="transcript">Full transcript</label><textarea id="transcript" rows="3" placeholder="Transcribe an audio/video narration to create a full transcript…"></textarea><p id="transcriptHint" class="hint" hidden>For captured narration, this transcript is built from the timed step captions. Edit the captions in each step to keep the transcript and timing in sync.</p><p id="aiDisclosure">Captured mic audio stays local unless you choose Transcribe; that action sends it to OpenAI for timed speech segments. AI features require an API key. AI voice is synthetic.</p></section>
+      <section class="brand-panel" aria-label="Guide theme and branding"><div><strong>Guide look</strong><p class="hint">Choose a style for the written guide export. These settings are saved with the project.</p></div><label for="brandTheme">Template</label><select id="brandTheme"><option value="clean">Clean</option><option value="editorial">Editorial</option><option value="bold">Bold</option></select><label for="brandAccent">Accent color</label><input id="brandAccent" type="color" value="#6d8eff"><label for="brandTitleStyle">Title style</label><select id="brandTitleStyle"><option value="standard">Standard</option><option value="compact">Compact</option><option value="display">Display</option></select><label for="brandLogo">Logo (PNG/JPEG/WebP, up to 350 KB)</label><input id="brandLogo" type="file" accept="image/png,image/jpeg,image/webp"><button id="clearBrandLogo" class="button" type="button">Remove logo</button></section>
       <aside>
         <h2>Steps <span id="count"></span></h2>
+        <div id="bulkActions" class="bulk-actions" hidden><span id="bulkCount">0 selected</span><div><button id="bulkMoveUp" class="button" type="button">Move up</button><button id="bulkMoveDown" class="button" type="button">Move down</button><button id="bulkDuplicate" class="button" type="button">Duplicate</button><button id="bulkDelete" class="button danger" type="button">Delete</button></div></div>
         <ol id="steps"></ol>
+        <section id="clipLibrary" class="clip-library" hidden aria-label="Captured video clips">
+          <h3>Captured tab video</h3>
+          <p>Review the continuous recording, then insert it as its own guide step after the selected step.</p>
+          <video id="capturedClipPreview" controls playsinline></video>
+          <button id="insertClip" class="button">Insert after selected step</button>
+        </section>
       </aside>
       <div class="scene">
         <div class="scene-bar"><div><span class="eyebrow">VIDEO SCENE</span><strong id="sceneTitle">Step 01</strong></div><div class="scene-tools"><button id="moveUp" class="icon-button" title="Move step up" aria-label="Move step up">↑</button><button id="moveDown" class="icon-button" title="Move step down" aria-label="Move step down">↓</button><button id="duplicate" class="icon-button" title="Duplicate step" aria-label="Duplicate step">＋</button><button id="remove" class="icon-button danger" title="Delete step" aria-label="Delete step">×</button></div></div>
-        <div class="frame"><div id="redactionHint" class="redaction-hint" hidden>Drag over sensitive pixels to redact · Esc to cancel</div><canvas id="redactionCanvas"></canvas><img id="image" alt="Screenshot of the selected step"><div id="annotationLayer" class="annotation-layer" aria-label="Editable annotations"></div></div>
+        <div class="frame"><div id="redactionHint" class="redaction-hint" hidden>Drag over sensitive pixels to redact · Esc to cancel</div><canvas id="redactionCanvas"></canvas><img id="image" alt="Screenshot of the selected step"><video id="clipStepPreview" controls playsinline hidden></video><div id="annotationLayer" class="annotation-layer" aria-label="Editable annotations"></div><div id="captionPreview" class="caption-preview" hidden aria-live="polite"></div></div>
         <div class="script">
+          <label for="stepDescription">Step description</label><textarea id="stepDescription" maxlength="400" rows="2" placeholder="Short summary of what this step accomplishes"></textarea>
+          <div id="videoAnalysisPane" hidden><label for="videoAnalysis">AI video action breakdown</label><textarea id="videoAnalysis" maxlength="1200" rows="4" placeholder="Analyze this video step to draft observed actions and timestamps."></textarea><p id="videoAnalysisCoverage" class="hint" aria-live="polite">Analysis selects up to 12 frames across the clip, favoring visual changes. Brief actions can still be missed; review the sequence.</p></div>
           <div class="label-row"><label for="narration">Viewer instruction &amp; narration</label><span id="charCount">0 / 400</span></div>
           <textarea id="narration" maxlength="400" rows="3" placeholder="Tell the viewer what to do, for example: Click Settings, then choose Billing."></textarea>
-          <div class="annotation-tools" aria-label="Visual teaching tools">
+          <div class="voice-direction"><label for="voicePace">AI voice pace</label><select id="voicePace"><option value="natural">Natural</option><option value="slower">Slower and deliberate</option><option value="brisk">Brisk and concise</option></select><label for="voiceInstructions">Voice direction and pronunciation notes</label><textarea id="voiceInstructions" maxlength="300" rows="2" placeholder="Warm tone; pronounce API as “A P I.”"></textarea><span class="hint">Natural-language guidance for AI voice generation; pronunciation may vary.</span></div>
+          <div id="audioSourceControls" class="audio-source"><label for="audioSource">Narration audio source</label><select id="audioSource"><option value="local">Local speech</option><option value="synthetic" hidden>AI voiceover</option><option value="recorded" hidden>Recorded microphone</option></select><button id="useLocalVoice" class="button" type="button" hidden>Use local speech for this step</button><span class="hint">Local speech works without AI. AI voiceover and recorded audio appear when available.</span></div>
+          <div id="captionEditorPane" class="caption-editor" hidden><div class="label-row"><strong>Timed captions for this step</strong><button id="addCaption" class="button">Add caption</button></div><p class="hint">Automatic caption timings can be approximate, especially when grouped around pauses. Review and edit each Start and End time before export. Times follow the original microphone recording. VTT and SRT downloads use that timeline. Captions are burned into MP4 export and previewed over the scene. MP4-timed downloads are generated after rendering in current scene order; when narration duration changes, cue positions scale proportionally within that step.</p><div id="captionEditor"></div></div>
+          <div id="annotationTools" class="annotation-tools" aria-label="Visual teaching tools">
             <span class="tool-label">Teach visually</span>
             <button id="marker" class="button">Place marker</button>
             <button id="callout" class="button">Place callout</button>
@@ -57,7 +84,15 @@
             <span id="annotationHint" class="annotation-hint" aria-live="polite">Choose a tool, then place it on the screenshot.</span>
             <div class="annotation-edit"><input id="annotationText" maxlength="140" placeholder="Selected annotation text" aria-label="Selected annotation text"><button id="annotationApply" class="button">Apply text</button><button id="annotationDelete" class="button danger">Delete</button><button id="annotationUndo" class="button">Undo</button><button id="annotationRedo" class="button">Redo</button></div>
           </div>
-          <div class="script-actions"><div><button id="preview">Play narration</button><button id="redact" class="button">Redact pixels</button></div><span class="hint">Blank lines become silent scenes</span></div>
+          <div id="focusTools" class="focus-tools" aria-label="Scene focus controls">
+            <span class="tool-label">Scene focus</span>
+            <button id="focus" class="button">Place focus</button>
+            <label class="focus-zoom" for="focusZoom">Zoom <span id="focusZoomValue">1.0×</span></label>
+            <input id="focusZoom" type="range" min="1" max="2.4" step="0.1" value="1" aria-label="Scene focus zoom">
+            <button id="focusReset" class="button">Reset</button>
+            <span id="focusHint" class="annotation-hint">Focus keeps the important area readable in preview and export.</span>
+          </div>
+          <div class="script-actions"><div><button id="preview">Play narration</button><button id="playRecordedStep" class="button" hidden>Play recorded speech for this step</button><audio id="recordedNarration" controls hidden></audio><button id="redact" class="button">Redact pixels</button><button id="playAiVoice" class="button" hidden>Play AI voiceover</button></div><span class="hint">Blank lines become silent scenes</span></div>
         </div>
       </div>
     </section>
@@ -68,5 +103,20 @@
       <div id="guidePreview" class="guide-preview"></div>
     </section>
   </main>
+  <div id="aiConnectDialog" class="ai-connect-backdrop" hidden>
+    <section class="ai-connect-card" role="dialog" aria-modal="true" aria-labelledby="aiConnectTitle">
+      <button id="closeAiConnect" class="ai-connect-close" type="button" aria-label="Close">×</button>
+      <span class="eyebrow">AI CONNECTION</span>
+      <h2 id="aiConnectTitle">Choose how Stepfilm uses AI</h2>
+      <p>Use your ChatGPT plan allowance for tutorial drafts, video-frame analysis, and caption translation. Stepfilm only sends data when you run one of those actions.</p>
+      <button id="connectChatGPT" class="primary" type="button">Continue with ChatGPT</button>
+      <small>Uses your eligible plan allowance and limits. No API key required.</small>
+      <hr>
+      <button id="connectApiKey" class="button" type="button">Connect an API key</button>
+      <small>OpenAI API usage is billed separately from ChatGPT plans.</small>
+      <button id="disconnectChatGPT" class="text-button" type="button">Disconnect ChatGPT</button>
+      <p class="hint">Audio transcription and AI voiceover aren’t included in ChatGPT-plan access. Local speech and manual captions remain available.</p>
+    </section>
+  </div>
 </body>
 </html>
