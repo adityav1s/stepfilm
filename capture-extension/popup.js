@@ -67,18 +67,23 @@ async function restore() {
   } catch (error) { status(error.message || "Stepfilm is unavailable.", true); }
 }
 
-$("start").onclick = async () => {
+async function startCapture(includeMic = $("mic").checked) {
   $("start").disabled = true;
+  $("continueSilent").hidden = true;
   try {
     const selectedSource = $("source").value;
     let streamId = "";
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error("Select a browser tab before starting capture.");
-    const includeMic = $("mic").checked;
     if (includeMic) {
       let check;
       try { check = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); }
-      catch (_) { throw new Error("Microphone access was denied. Allow microphone access and retry, or turn off Record microphone narration to continue silently."); }
+      catch (_) {
+        $("start").disabled = false;
+        $("continueSilent").hidden = false;
+        status("Microphone access was denied. You can allow it in Chrome and retry, or continue this capture without narration.", true);
+        return;
+      }
       check.getTracks().forEach((track) => track.stop());
     }
     if (selectedSource === "desktop") {
@@ -106,6 +111,12 @@ $("start").onclick = async () => {
     $("start").disabled = false;
     status(`${error.message || "Could not start capture."} Check the selected capture permission and retry.`, true);
   }
+}
+
+$("start").onclick = () => startCapture();
+$("continueSilent").onclick = () => {
+  $("mic").checked = false;
+  startCapture(false);
 };
 
 $("step").onclick = async () => {

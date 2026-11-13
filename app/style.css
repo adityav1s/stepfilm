@@ -57,6 +57,11 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px sol
 .ai-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .ai-controls select { padding: 9px 11px; color: inherit; background: #232a38; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 .ai-toolbar textarea { width: 100%; min-height: 70px; resize: vertical; }
+.ai-group { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+.ai-group summary, .setup-help summary { cursor: pointer; font-weight: 700; }
+.ai-group[open] summary { margin-bottom: 10px; }
+.setup-help { color: var(--muted); font-size: 12px; }
+.setup-help p { margin: 6px 0 0; line-height: 1.5; }
 .brand-panel { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(6, minmax(100px, 1fr)); gap: 8px 12px; align-items: end; padding: 13px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .brand-panel > div:first-child { grid-column: 1 / -1; }
 .brand-panel p { margin: 3px 0 0; }

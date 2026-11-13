@@ -47,6 +47,17 @@ curl -fsS "$BASE/chatgpt-callback.js" | rg -q 'stepfilm-chatgpt-connected'
 echo "[3/5] Capture API lifecycle"
 ORIGIN="$BASE"
 curl -fsS -X POST "$BASE/api/capture/start" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"title":"Acceptance workflow"}' >/tmp/stepfilm-start.json
+if curl -fsS -X POST "$BASE/api/capture/start" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{"title":"Should not replace active capture"}' >/dev/null 2>&1; then
+  echo "a second capture replaced the active capture" >&2; exit 1
+fi
+curl -fsS "$BASE/api/capture/status" >/tmp/stepfilm-active-status.json
+python3 - <<'PY'
+import json
+started=json.load(open('/tmp/stepfilm-start.json'))
+active=json.load(open('/tmp/stepfilm-active-status.json'))
+assert active['capturing'] and active['captureId'] == started['captureId']
+assert active['title'] == 'Acceptance workflow' and active['count'] == 0
+PY
 PNG='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 for n in 1 2 3; do
   curl -fsS -X POST "$BASE/api/capture/step" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data "{\"image\":\"$PNG\"}" >/tmp/stepfilm-step.json

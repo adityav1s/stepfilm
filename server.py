@@ -747,7 +747,15 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("The continuous tab video reached the 250 MB limit. Stop video and keep the screenshot guide, or restart with a shorter capture.")
                 if shutil.disk_usage(self.server.capture_media_dir).free < size + 64 * 1024 * 1024:
                     raise ValueError("The computer is low on disk space. Stop video and keep the screenshot guide; the captured screenshots are still available.")
-                chunk = self.rfile.read(size)
+                parts = []
+                remaining = size
+                while remaining:
+                    part = self.rfile.read(min(1024 * 1024, remaining))
+                    if not part:
+                        raise ValueError("A video chunk upload ended early. Keep the popup open and retry Stop.")
+                    parts.append(part)
+                    remaining -= len(part)
+                chunk = b"".join(parts)
                 with media_path.open("ab") as video:
                     video.write(chunk)
                 self.server.capture_chunk_count += 1
@@ -959,6 +967,8 @@ class Handler(BaseHTTPRequestHandler):
                                           for i, captions in enumerate(per_step)], "duration": float(duration)})
                 return
             if self.path == "/api/capture/start":
+                if self.server.capture_steps is not None:
+                    raise ValueError("A capture is already active. Stop it or keep its screenshots before starting another.")
                 title = body.get("title", "Captured workflow")
                 if not isinstance(title, str) or not title.strip():
                     raise ValueError("Give the capture a title.")
