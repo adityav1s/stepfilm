@@ -7,7 +7,7 @@ let timer;
 const api = async (path, body) => {
   let response;
   try { response = await fetch(`http://127.0.0.1:8765${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
-  catch (_) { throw new Error("Stepfilm is not running. Start it with: python3 server.py"); }
+  catch (_) { throw new Error("Stepfilm’s local server is not responding at http://127.0.0.1:8765. Start Stepfilm from its folder, then retry."); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Stepfilm is not running.");
   return data;
@@ -109,7 +109,7 @@ async function startCapture(includeMic = $("mic").checked) {
     status(selectedSource === "desktop" ? (includeMic ? "Screen/window and microphone are recording. Use Capture current step at each action." : "Screen/window video is recording. Use Capture current step at each action.") : (includeMic ? "Tab and microphone are recording. Speak through each action; screenshots mark the transcript steps." : "Screenshots and tab video are recording together."));
   } catch (error) {
     $("start").disabled = false;
-    status(`${error.message || "Could not start capture."} Check the selected capture permission and retry.`, true);
+    status(error.message || "Could not start capture. Check the selected capture permission and retry.", true);
   }
 }
 
