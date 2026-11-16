@@ -36,6 +36,19 @@ Stepfilm includes a small local Chrome extension for creating a guide without a 
 
 The extension captures the visible active tab after page clicks or when you click the manual capture button, while tab video and optional microphone narration record continuously in the background. Raw capture media stays in the local `~/.stepfilm/captured-clips` directory. The mic track is sent to OpenAI only when **Transcribe captured narration** is chosen in the editor. Stepfilm does not read typed values or record tab/system audio. Video capture is limited to 250 MB; low disk space or an upload failure offers a path to keep screenshots.
 
+### Automatic step-by-step guides
+
+You don't need to write anything after a capture. In **Browser tab** mode, the extension records what each action was: the visible label and role of the button, link, tab, checkbox, or menu item you clicked; the label of any field you filled in (never what you typed); the option you picked in a dropdown; Enter presses; and page changes. When you stop, the editor opens with every step already written:
+
+- an instruction such as *Click “New project”*, *Fill in the “Project name” field*, or *Choose “Private” from “Visibility”*
+- a one-sentence description of the step
+- a highlight box around the element you used, plus a zoom toward it in the exported video
+- a guide title such as *How to create project in Acme*
+
+The step text drives narration, so **Export MP4** produces a narrated video with local speech and no API key. Steps you edit are never overwritten. If a ChatGPT plan is connected, Stepfilm also polishes the wording automatically. It sends each screenshot along with the recorded action, so the AI describes what you actually did. **Improve wording with AI** runs the same pass on demand.
+
+In **Screen or window** mode there is no click information. If you don't add manual checkpoints, Stepfilm finds steps from visual changes in the recording, up to 15. Those steps start without text: connect AI to describe them, or type each one.
+
 To use a phone-recorded walkthrough, transfer the video file to the computer running Stepfilm, then choose **Use a mobile recording → Choose video file** in the editor. Files up to 250 MB are normalized to local WebM, and original clip audio is retained for preview, transcription, and MP4 export. This imports a recording; it does not capture directly from a phone.
 
 For a quick first run without a capture, open `sample-guide.html` from this folder in Stepfilm.

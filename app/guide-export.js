@@ -22,7 +22,7 @@
         ? `<video controls playsinline src="${escapeHtml(step.portableVideoUrl || `http://127.0.0.1:8765${step.videoUrl || `/api/media/${step.videoId}`}`)}">${tracks}Captured browser tab clip</video>`
         : `<img src="${escapeHtml(step.image)}" alt="Step ${index + 1}: ${escapeHtml(step.text || "Screenshot")}">`;
       const captionList = Array.isArray(step.captions) && step.captions.length ? `<details class="step-captions"><summary>Captions</summary><ol>${step.captions.map((caption) => `<li>${escapeHtml(caption.text || "")}</li>`).join("")}</ol></details>` : "";
-      return `<section data-step="${index + 1}"><h2>Step ${index + 1}</h2>${step.description ? `<p data-description="true">${escapeHtml(step.description)}</p>` : ""}${media}<p>${escapeHtml(step.text || "Silent step")}</p>${captionList}</section>`;
+      return `<section data-step="${index + 1}"><h2>Step ${index + 1}</h2>${step.description ? `<p data-description="true">${escapeHtml(step.description)}</p>` : ""}${media}${step.text || !step.description ? `<p>${escapeHtml(step.text || "Silent step")}</p>` : ""}${captionList}</section>`;
     }).join("\n");
     const transcript = guide.transcript ? `<section><h2>Transcript</h2><p>${escapeHtml(guide.transcript).replace(/\n/g, "<br>")}</p></section>` : "";
     const logo = brand.logo ? `<img class="brand-logo" src="${escapeHtml(brand.logo)}" alt="Guide logo">` : "";
@@ -34,8 +34,8 @@
   }
   function toMarkdown(guide) {
     return [`# ${guide.title || "Stepfilm guide"}`, "", ...guide.steps.flatMap((step, index) => step.kind === "video"
-      ? [`## Step ${index + 1}`, "", ...(step.description ? [step.description, ""] : []), `[Play captured clip](http://127.0.0.1:8765${step.videoUrl || `/api/media/${step.videoId}`})`, "", step.text || "Silent step", ""]
-      : [`## Step ${index + 1}`, "", ...(step.description ? [step.description, ""] : []), `![Step ${index + 1}](${step.image})`, "", step.text || "Silent step", ""]), ...(guide.transcript ? ["## Transcript", "", guide.transcript, ""] : [])].join("\n");
+      ? [`## Step ${index + 1}`, "", ...(step.description ? [step.description, ""] : []), `[Play captured clip](http://127.0.0.1:8765${step.videoUrl || `/api/media/${step.videoId}`})`, "", ...(step.text || !step.description ? [step.text || "Silent step", ""] : [])]
+      : [`## Step ${index + 1}`, "", ...(step.description ? [step.description, ""] : []), `![Step ${index + 1}](${step.image})`, "", ...(step.text || !step.description ? [step.text || "Silent step", ""] : [])]), ...(guide.transcript ? ["## Transcript", "", guide.transcript, ""] : [])].join("\n");
   }
   return { toHtml, toMarkdown, toPrintHtml };
 });

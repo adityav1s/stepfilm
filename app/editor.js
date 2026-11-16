@@ -1,7 +1,7 @@
 const get = (id) => document.getElementById(id);
 const ui = Object.fromEntries(
   ["voice", "saveState", "title", "instructions", "open", "openProject", "file", "projectFile", "export", "download", "saveProject", "downloadGuide", "printGuide", "printDisclosure", "downloadMarkdown", "shareGuide", "shareDisclosure", "exportScorm", "scormDisclosure",
-   "status", "workspace", "count", "steps", "bulkActions", "bulkCount", "bulkMoveUp", "bulkMoveDown", "bulkDuplicate", "bulkDelete", "image", "clipStepPreview", "sceneTitle", "narration", "stepDescription", "videoAnalysisPane", "videoAnalysis", "videoAnalysisCoverage", "aiAnalyzeVideo", "charCount", "voicePace", "voiceInstructions", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationTools", "focusTools", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "captionPreview", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove", "focus", "focusZoom", "focusZoomValue", "focusReset", "focusHint", "clipLibrary", "capturedClipPreview", "insertClip", "mobileVideoFile", "importMobileVideo", "aiSetup", "aiConnectDialog", "aiConnectionInfo", "aiDisclosure", "closeAiConnect", "connectChatGPT", "connectApiKey", "disconnectChatGPT", "aiDraft", "transcribeButton", "transcribeCapture", "transcriptFile", "transcript", "transcriptHint", "captionLanguage", "translateCaptions", "downloadVtt", "downloadSrt", "captionEditorPane", "captionEditor", "addCaption", "recordedNarration", "playRecordedStep", "audioSourceControls", "audioSource", "useLocalVoice", "aiVoice", "aiVoiceover", "aiVoiceoverAll", "playAiVoice", "brandTheme", "brandAccent", "brandTitleStyle", "brandLogo", "clearBrandLogo"]
+   "status", "workspace", "count", "steps", "bulkActions", "bulkCount", "bulkMoveUp", "bulkMoveDown", "bulkDuplicate", "bulkDelete", "image", "clipStepPreview", "sceneTitle", "narration", "stepDescription", "videoAnalysisPane", "videoAnalysis", "videoAnalysisCoverage", "aiAnalyzeVideo", "charCount", "voicePace", "voiceInstructions", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationTools", "focusTools", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "captionPreview", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove", "focus", "focusZoom", "focusZoomValue", "focusReset", "focusHint", "clipLibrary", "capturedClipPreview", "insertClip", "mobileVideoFile", "importMobileVideo", "aiSetup", "aiConnectDialog", "aiConnectionInfo", "aiDisclosure", "closeAiConnect", "connectChatGPT", "connectApiKey", "disconnectChatGPT", "aiDraft", "transcribeButton", "transcribeCapture", "transcriptFile", "transcript", "transcriptHint", "captionLanguage", "translateCaptions", "downloadVtt", "downloadSrt", "captionEditorPane", "captionEditor", "addCaption", "recordedNarration", "playRecordedStep", "audioSourceControls", "audioSource", "useLocalVoice", "aiVoice", "aiVoiceover", "aiVoiceoverAll", "playAiVoice", "brandTheme", "brandAccent", "brandTitleStyle", "brandLogo", "clearBrandLogo", "autoGuideBanner", "autoGuideHeadline", "autoGuideDetail", "autoGuidePreview", "autoGuideImprove", "autoGuideDismiss", "exportMenu", "resultDownload"]
     .map((id) => [id, get(id)]),
 );
 let guide;
@@ -154,7 +154,10 @@ function beginAnnotationDrag(event, id, resizing) {
 
 function stepLabel(index) {
   const step = guide.steps[index];
-  return step.text.trim() || (step.kind === "video" ? "Captured video clip" : "Silent step");
+  if (step.text.trim()) return step.text.trim();
+  if (step.kind === "video") return "Captured video clip";
+  if (step.action?.type === "scene") return `Screen change at ${Math.floor(step.captureAt / 60)}:${String(Math.round(step.captureAt % 60)).padStart(2, "0")}`;
+  return "Silent step";
 }
 
 function select(index) {
@@ -255,6 +258,7 @@ function loadGuide(imported) {
   annotationFuture = [];
   ui.title.textContent = guide.title;
   ui.instructions.hidden = true;
+  ui.autoGuideBanner.hidden = true;
   const quickStart = document.getElementById("quickStart");
   if (quickStart) quickStart.hidden = true;
   ui.workspace.hidden = false;
@@ -268,6 +272,7 @@ function loadGuide(imported) {
   ui.shareDisclosure.hidden = false;
   ui.exportScorm.hidden = false;
   ui.scormDisclosure.hidden = false;
+  ui.exportMenu.hidden = false;
   ui.count.textContent = guide.steps.length;
   ui.steps.replaceChildren();
   ui.clipLibrary.hidden = !guide.capturedClips.length;
@@ -343,6 +348,8 @@ function showEmptyState() {
   ui.shareDisclosure.hidden = true;
   ui.exportScorm.hidden = true;
   ui.scormDisclosure.hidden = true;
+  ui.exportMenu.hidden = true;
+  ui.autoGuideBanner.hidden = true;
   ui.steps.replaceChildren();
   ui.clipLibrary.hidden = true;
   ui.count.textContent = "";
@@ -367,7 +374,7 @@ async function renderGuidePreview() {
   }
   heading.textContent = guide.title;
   ui.guidePreview.append(heading);
-  const images = await Promise.all(guide.steps.map((step) => step.kind === "video" ? null : flattenStep(step)));
+  const images = await Promise.all(guide.steps.map((step) => step.kind === "video" ? null : flattenStep(step, { zoom: false })));
   guide.steps.forEach((step, index) => {
     const item = document.createElement("article");
     const number = document.createElement("span");
@@ -385,10 +392,12 @@ async function renderGuidePreview() {
     } else {
       const image = document.createElement("img"); image.src = images[index]; image.alt = `Step ${index + 1}`; copy.append(image);
     }
-    const text = document.createElement("p");
-    text.textContent = step.text.trim() || "No written instruction yet — add one in the editor so viewers know what to do.";
-    if (!step.text.trim()) text.className = "missing-instruction";
-    copy.append(text);
+    if (!step.text.trim()) {
+      const text = document.createElement("p");
+      text.textContent = "No written instruction yet — add one in the editor so viewers know what to do.";
+      text.className = "missing-instruction";
+      copy.append(text);
+    }
     item.append(number, copy);
     ui.guidePreview.append(item);
   });
@@ -598,6 +607,7 @@ ui.narration.addEventListener("input", () => {
   clearVideo();
   guide.steps[selected].text = ui.narration.value;
   guide.steps[selected].aiGenerated = false;
+  guide.steps[selected].autoGenerated = false;
   const currentStep = guide.steps[selected];
   if (currentStep.captions.length) {
     currentStep.captions = [{ start: currentStep.captureStart, end: currentStep.captureEnd, text: ui.narration.value }];
@@ -611,7 +621,7 @@ ui.narration.addEventListener("input", () => {
   ui.charCount.textContent = `${ui.narration.value.length} / 400`;
   persist();
 });
-ui.stepDescription.addEventListener("input", () => { if (!guide) return; guide.steps[selected].description = ui.stepDescription.value; guide.steps[selected].aiGenerated = false; persist(); });
+ui.stepDescription.addEventListener("input", () => { if (!guide) return; guide.steps[selected].description = ui.stepDescription.value; guide.steps[selected].aiGenerated = false; guide.steps[selected].autoGenerated = false; persist(); });
 ui.videoAnalysis.addEventListener("input", () => { if (!guide || guide.steps[selected]?.kind !== "video") return; guide.steps[selected].videoAnalysis = ui.videoAnalysis.value.slice(0, 1200); guide.steps[selected].aiGenerated = false; persist(); });
 ui.audioSource.addEventListener("change", () => {
   if (!guide) return;
@@ -813,31 +823,68 @@ ui.aiAnalyzeVideo.addEventListener("click", async () => {
   } catch (error) { status(error.message, true); }
   finally { ui.aiAnalyzeVideo.disabled = false; ui.aiAnalyzeVideo.textContent = "Analyze this video step"; }
 });
-ui.aiDraft.addEventListener("click", async () => {
-  if (!guide) return;
-  const hasAuthored = guide.steps.some((step) => (!step.aiGenerated && (step.text.trim() || (step.description || "").trim())) || step.voiceover) || guide.titleEdited || (guide.title && !guide.aiTitle && !["Browser workflow", "Captured workflow", "Untitled guide"].includes(guide.title));
-  if (hasAuthored && !confirm("AI drafting will replace existing title, descriptions, narration, and voiceovers. Continue?")) return;
+async function draftWithAi({ automatic = false } = {}) {
+  if (!guide) return false;
+  const hasAuthored = guide.steps.some((step) => (!step.aiGenerated && !step.autoGenerated && (step.text.trim() || (step.description || "").trim())) || step.voiceover) || guide.titleEdited || (guide.title && !guide.aiTitle && !guide.autoTitle && !["Browser workflow", "Captured workflow", "Untitled guide"].includes(guide.title));
+  if (!automatic && hasAuthored && !confirm("AI drafting will replace existing title, descriptions, narration, and voiceovers. Continue?")) return false;
   ui.aiDraft.disabled = true; ui.aiDraft.textContent = "Drafting…";
+  ui.autoGuideImprove.disabled = true; ui.autoGuideImprove.textContent = "Improving with AI…";
   try {
     const response = await api("/api/ai/draft", { title: guide.title, steps: guide.steps.map((step) => ({ ...step, image: step.sourceImage || step.image })) });
     const result = await response.json();
-    guide.title = String(result.title || guide.title).slice(0, 150); guide.aiTitle = true; guide.titleEdited = false; ui.title.textContent = guide.title;
+    if (!guide.titleEdited) { guide.title = String(result.title || guide.title).slice(0, 150); guide.aiTitle = true; ui.title.textContent = guide.title; }
     let skipped = 0;
+    let improved = 0;
     result.steps.forEach((draft, index) => {
       const step = guide.steps[index];
-      if (step.kind === "video" || draft.skipped) { skipped++; return; }
-      step.text = String(draft.instruction || "").slice(0, 400);
-      step.description = String(draft.description || "").slice(0, 400);
+      if (!step || step.kind === "video" || draft.skipped) { skipped++; return; }
+      // An automatic pass never overwrites words the user typed.
+      if (automatic && !step.autoGenerated && step.text.trim()) return;
+      step.text = String(draft.instruction || step.text || "").slice(0, 400);
+      step.description = String(draft.description || step.description || "").slice(0, 400);
       step.aiGenerated = true;
-      step.annotations = (step.annotations || []).filter((a) => a.generated !== true);
+      step.autoGenerated = false;
+      step.annotations = (step.annotations || []).filter((a) => a.generated !== true || a.origin === "action");
       const callout = String(draft.callout || "").slice(0, 140);
       if (callout) { const [tx, ty] = Array.isArray(draft.target) ? draft.target : [0.5, 0.5]; step.annotations.push(StepfilmAnnotations.create("callout", Math.max(0, Math.min(.7, Number(tx) - .15)), Math.max(0, Math.min(.84, Number(ty) + .06)), .3, .1, callout)); step.annotations.at(-1).generated = true; }
       step.voiceover = "";
+      improved++;
     });
-    loadGuide(guide); status(`AI drafted title, descriptions, instructions and callouts. Review every suggestion.${skipped ? ` ${skipped} video step${skipped === 1 ? " was" : "s were"} skipped because video analysis is not available.` : ""}`);
-  } catch (error) { status(error.message, true); }
-  finally { ui.aiDraft.disabled = false; ui.aiDraft.textContent = "Draft tutorial"; }
+    const keep = selected;
+    const bannerVisible = !ui.autoGuideBanner.hidden;
+    loadGuide(guide); select(Math.min(keep, guide.steps.length - 1));
+    ui.autoGuideBanner.hidden = !bannerVisible;
+    status(`AI rewrote ${improved} step${improved === 1 ? "" : "s"} using what you clicked. Review each suggestion.${skipped ? ` ${skipped} video step${skipped === 1 ? " was" : "s were"} skipped; use Analyze this video step for clips.` : ""}`);
+    ui.autoGuideDetail.textContent = `AI polished ${improved} step${improved === 1 ? "" : "s"} using your recorded clicks. Review the wording, then export.`;
+    return true;
+  } catch (error) { status(automatic ? `Stepfilm wrote the steps from your clicks. AI polishing was skipped: ${error.message}` : error.message, true); return false; }
+  finally { ui.aiDraft.disabled = false; ui.aiDraft.textContent = "Rewrite steps with AI"; ui.autoGuideImprove.disabled = false; ui.autoGuideImprove.textContent = "Improve wording with AI"; }
+}
+ui.aiDraft.addEventListener("click", () => draftWithAi());
+ui.autoGuideImprove.addEventListener("click", async () => {
+  const response = await api("/api/status").catch(() => undefined);
+  const info = response ? await response.json().catch(() => ({})) : {};
+  if (!info.aiConfigured) { status("Connect a ChatGPT plan (no API key needed) to polish step wording with AI. The steps Stepfilm wrote from your clicks work without it."); ui.aiSetup.click(); return; }
+  draftWithAi();
 });
+ui.resultDownload.addEventListener("click", () => ui.download.click());
+ui.autoGuideDismiss.addEventListener("click", () => { ui.autoGuideBanner.hidden = true; });
+ui.autoGuidePreview.addEventListener("click", () => ui.export.click());
+
+function showAutoGuideSummary(summary, provider) {
+  if (!summary || !summary.total) { ui.autoGuideBanner.hidden = true; return; }
+  const { written, highlighted, scenes, total } = summary;
+  ui.autoGuideHeadline.textContent = scenes && !written ? `Found ${scenes} screen change${scenes === 1 ? "" : "s"} in your recording` : `Stepfilm wrote ${written} of ${total} step${total === 1 ? "" : "s"} from your clicks`;
+  const parts = [];
+  if (highlighted) parts.push(`highlighted ${highlighted} clicked element${highlighted === 1 ? "" : "s"} in your guide and video, with the video zooming in on each`);
+  parts.push("narration uses the step text with local speech when you export");
+  let detail = `${parts.join("; ")}.`.replace(/^./, (c) => c.toUpperCase());
+  if (scenes && provider !== "chatgpt" && provider !== "api_key") detail += " Screen recordings have no click details — connect ChatGPT to describe these steps automatically, or type each one.";
+  else if (provider === "chatgpt") detail += " Polishing the wording with your ChatGPT plan…";
+  ui.autoGuideDetail.textContent = detail;
+  ui.autoGuideBanner.hidden = false;
+}
+
 ui.transcribeButton.addEventListener("click", () => ui.transcriptFile.click());
 ui.transcribeCapture.addEventListener("click", async () => {
   const selectedStep = guide?.steps?.[selected];
@@ -1008,18 +1055,27 @@ ui.preview.addEventListener("click", async () => {
 function loadImage(source) {
   return new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = source; });
 }
-async function flattenStep(step) {
+async function flattenStep(step, { zoom = true } = {}) {
   const source = await loadImage(step.sourceImage || step.image);
   const base = document.createElement("canvas"); base.width = source.naturalWidth; base.height = source.naturalHeight;
   const baseContext = base.getContext("2d"); baseContext.drawImage(source, 0, 0);
   const scale = Math.max(1, 1280 / source.naturalWidth, 720 / source.naturalHeight);
   const canvas = document.createElement("canvas"); canvas.width = Math.round(source.naturalWidth * scale); canvas.height = Math.round(source.naturalHeight * scale);
   const context = canvas.getContext("2d"); context.scale(scale, scale);
-  const focus = StepfilmAnnotations.normalizeFocus(step.focus);
+  // Zoom is a video effect; the written guide keeps the full screenshot.
+  const focus = zoom ? StepfilmAnnotations.normalizeFocus(step.focus) : { x: 0.5, y: 0.5, scale: 1 };
   context.save();
   context.translate((canvas.width / scale) / 2 - focus.x * base.width * focus.scale, (canvas.height / scale) / 2 - focus.y * base.height * focus.scale);
   context.scale(focus.scale, focus.scale);
   context.drawImage(base, 0, 0);
+  // Spotlight: dim everything outside highlighted elements so the target
+  // stands out on light and dark pages alike.
+  const highlights = (step.annotations || []).filter((annotation) => annotation.type === "highlight").map((annotation) => StepfilmAnnotations.geometry(annotation, source.naturalWidth, source.naturalHeight));
+  if (highlights.length) {
+    context.beginPath(); context.rect(0, 0, base.width, base.height);
+    for (const box of highlights) context.rect(box.x, box.y, box.width, box.height);
+    context.fillStyle = "rgba(15,20,32,.38)"; context.fill("evenodd");
+  }
   for (const annotation of step.annotations || []) {
     const box = StepfilmAnnotations.geometry(annotation, source.naturalWidth, source.naturalHeight);
     const { x, y, width, height } = box;
@@ -1036,7 +1092,7 @@ async function flattenStep(step) {
       layout.lines.forEach((value, index) => context.fillText(value, x + 12, y + 5 + index * layout.lineHeight)); continue;
     }
     if (annotation.type === "arrow") { context.strokeStyle = "#c4f48f"; context.fillStyle = "#c4f48f"; context.lineWidth = 7; context.beginPath(); context.moveTo(x, y); context.lineTo(x + width, y + height); context.stroke(); const angle = Math.atan2(height, width); context.beginPath(); context.moveTo(x + width, y + height); context.lineTo(x + width - 22 * Math.cos(angle - Math.PI / 6), y + height - 22 * Math.sin(angle - Math.PI / 6)); context.lineTo(x + width - 22 * Math.cos(angle + Math.PI / 6), y + height - 22 * Math.sin(angle + Math.PI / 6)); context.closePath(); context.fill(); continue; }
-    if (annotation.type === "highlight") { context.fillStyle = "rgba(196,244,143,.22)"; context.strokeStyle = "#c4f48f"; context.lineWidth = 5; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height); }
+    if (annotation.type === "highlight") { const line = Math.max(3, Math.round(Math.max(source.naturalWidth, source.naturalHeight) / 400)); context.strokeStyle = "#101827"; context.lineWidth = line * 3; context.strokeRect(x - line, y - line, width + line * 2, height + line * 2); context.strokeStyle = "#c4f48f"; context.lineWidth = line * 1.4; context.strokeRect(x - line, y - line, width + line * 2, height + line * 2); }
   }
   context.restore();
   return canvas.toDataURL("image/png");
@@ -1063,7 +1119,7 @@ ui.export.addEventListener("click", async () => {
     ui.download.href = videoUrl;
     ui.download.download = `${name || "tutorial"}.mp4`;
     ui.download.hidden = false;
-    ui.download.textContent = "Download MP4 again";
+    ui.download.textContent = "Download MP4";
     // Reuse the response blob for playback. The server intentionally streams
     // exports as a one-shot POST response and does not expose a stale
     // `/api/export/latest` file endpoint.
@@ -1086,9 +1142,11 @@ ui.export.addEventListener("click", async () => {
       ui.download.hidden = false;
     };
     ui.video.load();
+    ui.download.textContent = "Download MP4";
     await renderGuidePreview();
-    ui.download.click();
-    status("Your MP4 is ready. The download is available below.");
+    ui.result.scrollIntoView({ behavior: "smooth", block: "start" });
+    ui.video.play().catch(() => {});
+    status("Your video is ready. It is playing below; use Download MP4 to save it.");
   } catch (error) {
     status(error.message, true);
   } finally {
@@ -1231,5 +1289,17 @@ if (!captureLatest) {
   fetch("/api/capture/latest").then((response) => {
     if (!response.ok) throw new Error("No captured workflow is waiting in Stepfilm.");
     return response.json();
-  }).then(loadGuide).catch(() => { showEmptyState(); status("No pending capture. Start a new capture from the Chrome extension."); });
+  }).then(async (capture) => {
+    const built = globalThis.StepfilmAutoGuide ? StepfilmAutoGuide.build(capture) : capture;
+    loadGuide(built);
+    if (built.title !== capture.title) { guide.autoTitle = true; }
+    // Later reloads should reopen this draft (with edits), not the raw capture.
+    history.replaceState(null, "", "/");
+    let provider = "";
+    try { provider = (await (await api("/api/status")).json()).aiProvider || ""; } catch (_) {}
+    showAutoGuideSummary(built.autoGuide, provider);
+    status(built.autoGuide?.written ? "Your step-by-step tutorial was generated from the recording. Review any step, then export." : "Capture opened. Add a sentence to each step, or connect AI to describe them.");
+    // A ChatGPT plan has no per-call billing in Stepfilm, so polish automatically.
+    if (provider === "chatgpt" && guide.steps.some((step) => step.kind !== "video")) draftWithAi({ automatic: true });
+  }).catch(() => { showEmptyState(); status("No pending capture. Start a new capture from the Chrome extension."); });
 }
