@@ -51,6 +51,10 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px sol
 .quick-start strong { color: var(--accent); }
 .quick-start small { margin-top: 4px; color: var(--muted); }
 .workspace { display: grid; grid-template-columns: minmax(190px, 260px) minmax(0, 1fr); gap: 16px; margin-top: 30px; }
+.auto-guide-banner { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border: 1px solid var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.auto-guide-banner > div:first-child { display: grid; gap: 3px; min-width: 0; flex: 1 1 260px; }
+.auto-guide-banner small { color: var(--muted); font-size: 12px; }
+.auto-guide-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .ai-toolbar { grid-column: 1 / -1; display: grid; gap: 10px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .ai-toolbar > div:first-child { display: grid; gap: 3px; }
 .ai-toolbar small, #aiDisclosure { color: var(--muted); font-size: 12px; margin: 0; }
@@ -136,7 +140,7 @@ li + li { margin-top: 6px; }
 .annotation-object .resize-handle { position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px; border-radius: 50%; background: #fff; border: 2px solid #15200e; cursor: nwse-resize; }
 .annotation-marker { border-radius: 50%; background: var(--accent); color: #15200e; border: 3px solid #15200e; display: grid; place-items: center; font-weight: 800; }
 .annotation-callout { border-radius: 8px; padding: 8px 12px; background: rgba(196,244,143,.95); color: #15200e; border: 2px solid #15200e; font-weight: 700; overflow: hidden; }
-.annotation-highlight { border: 3px solid var(--accent); background: rgba(196,244,143,.22); }
+.annotation-highlight { border: 3px solid var(--accent); outline: 3px solid #101827; background: transparent; box-shadow: 0 0 0 4px rgba(16,24,39,.35); }
 .annotation-blur { border: 3px solid #ffada5; background: repeating-linear-gradient(135deg, rgba(10,15,25,.72), rgba(10,15,25,.72) 8px, rgba(255,173,165,.58) 8px, rgba(255,173,165,.58) 12px); }
 .annotation-arrow { height: 0 !important; border-top: 4px solid var(--accent); transform-origin: left center; }
 .annotation-arrow::after { content: ""; position: absolute; right: -2px; top: -10px; border-left: 16px solid var(--accent); border-top: 8px solid transparent; border-bottom: 8px solid transparent; }
@@ -178,6 +182,16 @@ textarea { display: block; width: 100%; resize: vertical; margin-bottom: 12px; p
   .local { display: none; }
   main { padding-top: 30px; }
   .workspace { grid-template-columns: 1fr; }
+  /* On phones, show the steps first; styling and AI tools follow. */
+  .workspace > .ai-toolbar, .workspace > .brand-panel { order: 5; }
   .brand-panel { grid-template-columns: repeat(2, minmax(100px, 1fr)); }
   ol { max-height: 160px; }
 }
+.intro .auto-guide-banner { margin: 14px 0 6px; }
+.export-menu { position: relative; }
+.export-menu > summary { list-style: none; cursor: pointer; }
+.export-menu > summary::-webkit-details-marker { display: none; }
+.export-menu-items { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; display: grid; gap: 8px; width: min(320px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 12px 30px rgba(0,0,0,.4); }
+.export-menu-items small { color: var(--muted); font-size: 11px; }
+@media (max-width: 640px) { .export-menu-items { position: static; width: 100%; } }
+.result-actions { display: flex; flex-wrap: wrap; gap: 8px; }

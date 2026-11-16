@@ -91,7 +91,7 @@ async function startCapture(includeMic = $("mic").checked) {
       if (!streamId) throw new Error("Screen/window capture was cancelled. Select a source to retry, or choose Browser tab.");
     }
     if (selectedSource === "tab") streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    const started = await api("/api/capture/start", { title: $("title").value, recording: true, narration: includeMic, captureMode: selectedSource });
+    const started = await api("/api/capture/start", { title: $("title").value.trim() || "Browser workflow", recording: true, narration: includeMic, captureMode: selectedSource });
     const result = await chrome.runtime.sendMessage({ target: "background", type: "start-recording", captureId: started.captureId, streamId, captureTabId: tab.id, captureTabTitle: tab.title, microphone: includeMic, captureMode: selectedSource });
     if (!result?.ok) {
       await api("/api/capture/cancel", { captureId: started.captureId }).catch(() => {});
@@ -101,12 +101,12 @@ async function startCapture(includeMic = $("mic").checked) {
     try { if (selectedSource === "tab") await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] }); }
     catch (_) { status("Video is recording this tab. Chrome blocked automatic click screenshots here; use Capture current step on a supported website.", true); }
     const current = await fetch("http://127.0.0.1:8765/api/capture/status").then((response) => response.json());
-    showCapture(current.count || 0, $("title").value, includeMic, selectedSource);
+    showCapture(current.count || 0, $("title").value.trim() || "Browser workflow", includeMic, selectedSource);
     $("keepScreenshots").hidden = true;
     recordingSince = Date.now(); paintTimer(); timer = setInterval(paintTimer, 1000);
     await chrome.action.setBadgeText({ text: "REC" });
     await chrome.action.setBadgeBackgroundColor({ color: "#e56b6f" });
-    status(selectedSource === "desktop" ? (includeMic ? "Screen/window and microphone are recording. Use Capture current step at each action." : "Screen/window video is recording. Use Capture current step at each action.") : (includeMic ? "Tab and microphone are recording. Speak through each action; screenshots mark the transcript steps." : "Screenshots and tab video are recording together."));
+    status(selectedSource === "desktop" ? (includeMic ? "Screen/window and microphone are recording. Stepfilm will find steps from screen changes; Capture current step adds one manually." : "Screen/window video is recording. Stepfilm will find steps from screen changes; Capture current step adds one manually.") : (includeMic ? "Recording with your narration. Click through the task — each click becomes a written step." : "Recording. Click through the task — each click becomes a written step."));
   } catch (error) {
     $("start").disabled = false;
     status(error.message || "Could not start capture. Check the selected capture permission and retry.", true);

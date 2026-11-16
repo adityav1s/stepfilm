@@ -15,6 +15,10 @@ node --check "$ROOT/capture-extension/offscreen.js"
 node "$ROOT/annotation-model.test.js"
 node "$ROOT/step-selection.test.js"
 node "$ROOT/guide-export.test.js"
+node --check "$ROOT/app/auto-guide.js"
+node "$ROOT/auto-guide.test.js"
+python3 "$ROOT/capture-action.test.py"
+python3 "$ROOT/auto-steps.test.py"
 python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$ROOT/capture-extension/manifest.json"
 python3 "$ROOT/video-step.test.py"
 python3 "$ROOT/realtime-tts.test.py"
@@ -42,7 +46,7 @@ assert query['redirect_uri'][0].startswith('http://127.0.0.1:')
 assert 'chatgpt.tokens.use.direct' in query['scope'][0]
 assert query['code_challenge_method'] == ['S256']
 PY
-curl -fsS "$BASE/chatgpt-callback.js" | rg -q 'stepfilm-chatgpt-connected'
+curl -fsS "$BASE/chatgpt-callback.js" | grep -q 'stepfilm-chatgpt-connected'
 
 echo "[3/5] Capture API lifecycle"
 ORIGIN="$BASE"
@@ -59,15 +63,18 @@ assert active['capturing'] and active['captureId'] == started['captureId']
 assert active['title'] == 'Acceptance workflow' and active['count'] == 0
 PY
 PNG='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
-for n in 1 2 3; do
+for n in 1 2; do
   curl -fsS -X POST "$BASE/api/capture/step" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data "{\"image\":\"$PNG\"}" >/tmp/stepfilm-step.json
 done
+curl -fsS -X POST "$BASE/api/capture/step" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data "{\"image\":\"$PNG\",\"action\":{\"type\":\"click\",\"role\":\"button\",\"name\":\"Save\",\"rect\":{\"x\":0.1,\"y\":0.2,\"width\":0.1,\"height\":0.05},\"evil\":true}}" >/tmp/stepfilm-step.json
 curl -fsS -X POST "$BASE/api/capture/stop" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data '{}' >/tmp/stepfilm-stop.json
 python3 - <<'PY'
 import json
 data=json.load(open('/tmp/stepfilm-stop.json'))
 assert len(data['steps']) == 3, data
+assert data['steps'][2]['action'] == {"type": "click", "role": "button", "name": "Save", "rect": {"x": 0.1, "y": 0.2, "width": 0.1, "height": 0.05}}, data['steps'][2]
 PY
+curl -fsS "$BASE/auto-guide.js" | grep -q "StepfilmAutoGuide"
 
 echo "[3b/5] Editor handoff shell"
 curl -fsS "$BASE/?capture=latest" | grep -q "Stepfilm"
@@ -131,6 +138,18 @@ with urllib.request.urlopen(scorm_request, timeout=30) as response, zipfile.ZipF
     resource = manifest.find(".//{http://www.imsproject.org/xsd/imscp_rootv1p1p2}resource")
     assert resource.attrib["{http://www.adlnet.org/xsd/adlcp_rootv1p2}scormtype"] == "sco"
     assert "LMSInitialize" in archive.read("index.html").decode("utf-8")
+# Screen/window capture with no manual checkpoints becomes scene steps.
+scene_started = post("/api/capture/start", {"title": "Screen workflow", "recording": True, "captureMode": "desktop"})
+scene_id = scene_started["captureId"]
+with tempfile.TemporaryDirectory() as temp:
+    raw = Path(temp) / "scenes.webm"
+    subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=640x360:r=24:d=2", "-f", "lavfi", "-i", "color=c=white:s=640x360:r=24:d=2", "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=24:d=2", "-filter_complex", "[0][1][2]concat=n=3", "-c:v", "libvpx-vp9", "-f", "webm", str(raw)], check=True, capture_output=True, timeout=60)
+    post(f"/api/capture/chunk?captureId={scene_id}&index=0", raw.read_bytes(), "application/octet-stream")
+post("/api/capture/recording/finish", {"captureId": scene_id, "chunks": 1})
+scene_guide = post("/api/capture/stop", {"captureId": scene_id})
+assert len(scene_guide["steps"]) == 3, [step.get("at") for step in scene_guide["steps"]]
+assert all(step["action"] == {"type": "scene"} and step["image"].startswith("data:image/jpeg;base64,") for step in scene_guide["steps"])
+assert scene_guide["capturedClips"][0]["id"] == scene_id, "the full recording stays available as a clip"
 print("continuous clip lifecycle: PASS")
 PY
 
@@ -140,5 +159,5 @@ if curl -fsS -X POST "$BASE/api/capture/step" -H "Origin: $ORIGIN" -H 'Content-T
 fi
 
 echo "[5/5] Threshold result"
-echo "AUTOMATED PASS: syntax, manifest, health, screenshot capture, finalized chunked WebM lifecycle, mixed video rendering, and invalid-image rejection"
+echo "AUTOMATED PASS: syntax, manifest, health, screenshot capture, click-action metadata, auto-written steps, screen-change steps, finalized chunked WebM lifecycle, mixed video rendering, and invalid-image rejection"
 echo "MANUAL REQUIRED: 3 consecutive Chrome runs, popup recovery, uninterrupted recording, clip insertion/order, annotation visibility, redaction, comprehension, and 3 playable exports"
