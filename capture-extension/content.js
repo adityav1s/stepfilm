@@ -52,7 +52,14 @@
   }
 
   function labelFor(element) {
-    if (element.labels?.length) return clean(element.labels[0].innerText);
+    if (element.labels?.length) {
+      // A label that wraps its control would otherwise include the
+      // control's own text (e.g. every option of a <select>).
+      const copy = element.labels[0].cloneNode(true);
+      copy.querySelectorAll("select,input,textarea,button,[contenteditable]").forEach((node) => node.remove());
+      const text = clean(copy.textContent);
+      if (text) return text;
+    }
     const labelledBy = element.getAttribute("aria-labelledby");
     if (labelledBy) {
       const text = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.innerText || "").join(" ");

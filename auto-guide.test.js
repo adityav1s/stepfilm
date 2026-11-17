@@ -33,7 +33,16 @@ assert.ok(built.steps[1].focus.scale > 1, "small targets are zoomed");
 assert.ok(built.steps[1].focus.x <= 1 - 0.5 / built.steps[1].focus.scale + 1e-9, "zoom stays inside the screenshot");
 
 const again = build(built);
-assert.equal(again.steps[1].annotations.filter((a) => a.origin === "action").length, 1, "rebuilding does not duplicate highlights");
+assert.deepEqual(again.steps[1].annotations.map((a) => a.type), ["highlight", "click", "callout"], "click steps get a spotlight, click marker and callout once, even when rebuilt");
+const click = built.steps[1].annotations.find((a) => a.type === "click");
+assert.ok(Math.abs(click.x + click.width / 2 - 0.84) < 0.001 && Math.abs(click.y + click.height / 2 - 0.12) < 0.001, "click marker sits on the pointer position");
+const callout = built.steps[1].annotations.find((a) => a.type === "callout");
+assert.equal(callout.text, "Click “New project”", "callout repeats the instruction");
+assert.ok(callout.x + callout.width <= 1 && (callout.x + callout.width <= highlight.x || callout.x >= highlight.x + highlight.width || callout.y >= highlight.y + highlight.height), "callout sits beside the target, inside the image");
+assert.deepEqual(built.steps[2].annotations.map((a) => a.type), ["highlight", "callout"], "typing steps have no click marker");
+assert.equal(built.intro, "In this guide, you'll learn how to create a project in Acme.");
+assert.ok(built.outro.length > 0);
+assert.equal(normalizeGuide(built).intro, built.intro, "intro narration persists");
 assert.equal(again.title, built.title);
 
 const normalized = normalizeGuide(built);

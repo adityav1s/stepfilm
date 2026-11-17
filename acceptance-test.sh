@@ -40,8 +40,12 @@ url=json.load(open('/tmp/stepfilm-chatgpt-start.json'))['authorizationUrl']
 parts=urlsplit(url)
 query=parse_qs(parts.query)
 assert parts.scheme == 'https' and parts.netloc == 'auth.openai.com'
-assert query['client_id'] == ['dynamic_agent_client']
-assert query['agent_name_hint'] == ['Stepfilm']
+# A fresh install registers via the dynamic client; after the first sign-in
+# Stepfilm reuses the client ID it was issued.
+if query['client_id'] == ['dynamic_agent_client']:
+    assert query['agent_name_hint'] == ['Stepfilm']
+else:
+    assert query['client_id'][0].startswith('oaiapp_'), query['client_id']
 assert query['redirect_uri'][0].startswith('http://127.0.0.1:')
 assert 'chatgpt.tokens.use.direct' in query['scope'][0]
 assert query['code_challenge_method'] == ['S256']

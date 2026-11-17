@@ -129,6 +129,42 @@
     return { x: clamp(rect.x - pad, 0, 1 - width), y: clamp(rect.y - pad, 0, 1 - height), width, height };
   }
 
+  // Click point: where the pointer went down, or the middle of the target.
+  function clickPointFor(action, box) {
+    if (action?.point && action.type === "click") return { x: clamp(action.point.x, 0, 1), y: clamp(action.point.y, 0, 1) };
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  }
+
+  // A callout bubble beside the target: right if there is room, else left,
+  // else below, else above. Sizes are fractions of the screenshot.
+  function calloutBoxFor(box) {
+    const width = 0.26, height = 0.085, gap = 0.015;
+    const middleY = clamp(box.y + box.height / 2 - height / 2, 0.01, 0.99 - height);
+    if (box.x + box.width + gap + width <= 0.99) return { x: box.x + box.width + gap, y: middleY, width, height };
+    if (box.x - gap - width >= 0.01) return { x: box.x - gap - width, y: middleY, width, height };
+    const x = clamp(box.x + box.width / 2 - width / 2, 0.01, 0.99 - width);
+    if (box.y + box.height + gap + height <= 0.99) return { x, y: box.y + box.height + gap, width, height };
+    return { x, y: clamp(box.y - gap - height, 0.01, 0.99 - height), width, height };
+  }
+
+  // Guidde-style step annotations: spotlight on the element, a click marker
+  // where the user pressed, and a callout that repeats the instruction.
+  // "click" annotations are circles centred in their box; renderers draw a
+  // ring with radius ~1.8% of the image width.
+  function actionAnnotations(action, box, text) {
+    const point = clickPointFor(action, box);
+    const items = [{ id: makeId(), type: "highlight", ...box, text: "", generated: true, origin: "action" }];
+    if (["click", "submit", "upload"].includes(action.type)) items.push({ id: makeId(), type: "click", x: clamp(point.x - 0.015, 0, 0.97), y: clamp(point.y - 0.015, 0, 0.97), width: 0.03, height: 0.03, text: "", generated: true, origin: "action" });
+    if (String(text || "").trim()) items.push({ id: makeId(), type: "callout", ...calloutBoxFor(box), text: String(text).slice(0, 140), generated: true, origin: "action" });
+    return items;
+  }
+
+  function introFor(title) {
+    const goal = String(title || "").trim();
+    if (/^how to /i.test(goal)) return `In this guide, you'll learn ${goal.charAt(0).toLowerCase()}${goal.slice(1)}.`;
+    return goal ? `This guide walks you through ${goal}.` : "This guide walks you through the workflow step by step.";
+  }
+
   // Zoom toward small targets for the video; keep the frame inside the image.
   function focusFor(box) {
     if (!box) return { x: 0.5, y: 0.5, scale: 1 };
@@ -182,7 +218,7 @@
       const box = highlightFor(action);
       const annotations = Array.isArray(step.annotations) ? step.annotations : [];
       if (box && !annotations.some((annotation) => annotation.origin === "action")) {
-        step.annotations = [...annotations, { id: makeId(), type: "highlight", ...box, text: "", generated: true, origin: "action" }];
+        step.annotations = [...annotations, ...actionAnnotations(action, box, step.text)];
         highlighted++;
       }
       if (box && (!step.focus || Number(step.focus.scale) === 1)) step.focus = focusFor(box);
@@ -190,8 +226,10 @@
       return step;
     });
     const title = DEFAULT_TITLES.has(String(capture.title || "").trim()) ? (guideTitle(steps) || capture.title) : capture.title;
-    return { ...capture, title, steps, autoGuide: { written, highlighted, scenes, total: steps.length } };
+    const intro = String(capture.intro || "").trim() ? capture.intro : introFor(title);
+    const outro = String(capture.outro || "").trim() ? capture.outro : "That's it — you've completed every step.";
+    return { ...capture, title, intro, outro, steps, autoGuide: { written, highlighted, scenes, total: steps.length } };
   }
 
-  return { build, stepCopy, highlightFor, focusFor, guideTitle, siteName, pageName, formatTime };
+  return { build, stepCopy, highlightFor, focusFor, guideTitle, siteName, pageName, formatTime, actionAnnotations, calloutBoxFor, introFor };
 });

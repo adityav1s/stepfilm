@@ -78,6 +78,20 @@ def sanitize_action(action):
     return clean
 
 
+def normalize_target_box(value):
+    """Return [x, y, w, h] inside 0..1 for a plausible element box, else None."""
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        x, y, w, h = (float(item) for item in value)
+    except (TypeError, ValueError):
+        return None
+    if not all(v == v for v in (x, y, w, h)) or w <= 0.003 or h <= 0.003 or w > 0.9 or h > 0.9:
+        return None
+    x, y = min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0)
+    return [x, y, min(w, 1.0 - x), min(h, 1.0 - y)]
+
+
 def describe_recorded_action(action):
     action = sanitize_action(action)
     if not action:
@@ -861,7 +875,7 @@ class Handler(BaseHTTPRequestHandler):
                     kind, raw = image_bytes(step.get("sourceImage") or step.get("image"))
                     mime = "image/jpeg" if kind == "jpeg" else f"image/{kind}"
                     prompt = {"model": "gpt-4.1-mini", "response_format": {"type": "json_object"}, "messages": [
-                      {"role": "system", "content": "Write concise, accurate browser tutorial content from screenshots. Never invent actions or claim success not visible. Return JSON with title, description (one-sentence summary <=200 chars), instruction (imperative, <=180 chars), callout (<=80 chars; empty if no clear target), and target (normalized [x,y] center coordinates 0..1; use [0.5,0.5] if no target)."},
+                      {"role": "system", "content": "Write concise, accurate browser tutorial content from screenshots. Never invent actions or claim success not visible. Return JSON with title (the whole guide's goal, e.g. 'How to create a project in Acme'), description (one-sentence summary <=200 chars), instruction (imperative, <=180 chars, naming the exact visible UI label), callout (<=60 chars; empty if no clear target), target (normalized [x,y] center coordinates 0..1 of the element to act on; use [0.5,0.5] if no target), and target_box (normalized [x,y,width,height] tightly around that element, or null if unsure)."},
                       {"role": "user", "content": [{"type": "text", "text": "Draft this tutorial step using visible UI labels. Existing title: " + str(body.get("title", "")) + describe_recorded_action(step.get("action"))}, {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(raw).decode()}", "detail": "high"}}]}
                     ], "max_tokens": 350}
                     draft = ai_json_response(self.server, prompt)
@@ -870,6 +884,9 @@ class Handler(BaseHTTPRequestHandler):
                         # The recorded element position is more reliable than a model guess.
                         rect = recorded["rect"]
                         draft["target"] = [rect["x"] + rect["width"] / 2, rect["y"] + rect["height"] / 2]
+                        draft["target_box"] = [rect["x"], rect["y"], rect["width"], rect["height"]]
+                    if isinstance(draft, dict):
+                        draft["target_box"] = normalize_target_box(draft.get("target_box"))
                     drafts.append(draft)
                 normalized = drafts
                 title = next((s.get("title") for s in normalized if s.get("title")), body.get("title", "Untitled guide"))
