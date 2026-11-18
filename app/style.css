@@ -211,9 +211,9 @@ body:not(.has-guide) .import-menu > summary { display: none; }
 body.has-guide .import-menu-items { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; display: grid; gap: 8px; width: max-content; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 12px 30px rgba(0,0,0,.4); }
 
 /* Steps list with annotated thumbnails */
-.steps-panel { padding: 12px; position: sticky; top: 12px; }
+.steps-panel { padding: 12px; }
 .steps-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-#steps { max-height: calc(100vh - 330px); min-height: 220px; padding-right: 2px; }
+#steps { max-height: none; overflow: visible; padding-right: 2px; }
 .step-row { align-items: flex-start; }
 .step-select { margin-top: 8px; }
 .step-row .step-open { display: grid; gap: 6px; padding: 6px; border-radius: 10px; background: #1d2330; }

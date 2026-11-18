@@ -1247,13 +1247,22 @@ const VOICE_KEY = "stepfilm-voice";
 api("/api/voices").then((response) => response.json()).then((result) => {
   const list = Array.isArray(result) ? result : Array.isArray(result?.voices) ? result.voices : [];
   const preferred = (() => { try { return localStorage.getItem(VOICE_KEY) || ""; } catch (_) { return ""; } })();
-  const fallbackDefault = typeof result?.default === "string" ? result.default : "";
+  const fallbackDefault = typeof result?.default === "string" ? result.default : (list.find((voice) => voice?.default)?.id || list.find((voice) => voice?.default)?.name || "");
+  const isNatural = (voice) => typeof voice === "object" && (voice.natural === true || /piper|neural|natural/i.test(`${voice.engine || ""} ${voice.kind || ""} ${voice.quality || ""} ${voice.label || ""} ${voice.name || ""}`));
+  const natural = document.createElement("optgroup"); natural.label = "Natural voices";
+  const system = document.createElement("optgroup"); system.label = /mac/i.test(result?.engine || "") ? "macOS voices" : "System voices";
   for (const voice of list) {
     const id = typeof voice === "string" ? voice : String(voice?.id || voice?.name || "");
     if (!id) continue;
     const option = document.createElement("option"); option.value = id;
-    option.textContent = typeof voice === "string" ? voice : [voice.label || voice.name || id, voice.language || voice.locale, voice.quality].filter(Boolean).join(" · ");
-    ui.narrationVoice.append(option);
+    const locale = typeof voice === "object" ? String(voice.language || voice.locale || "").replace("_", "-") : "";
+    const quality = typeof voice === "object" && voice.quality && !/standard/i.test(voice.quality) ? voice.quality : "";
+    option.textContent = typeof voice === "string" ? voice : [voice.label || voice.name || id, locale, quality].filter(Boolean).join(" · ");
+    (isNatural(voice) ? natural : system).append(option);
+  }
+  if (list.length) {
+    ui.narrationVoice.replaceChildren(...[natural, system].filter((group) => group.children.length));
+    if (!fallbackDefault) { const blank = document.createElement("option"); blank.value = ""; blank.textContent = "Default local voice"; ui.narrationVoice.prepend(blank); }
   }
   const pick = preferred || fallbackDefault;
   if (pick && [...ui.narrationVoice.options].some((option) => option.value === pick)) ui.narrationVoice.value = pick;
@@ -1496,6 +1505,11 @@ api("/api/status").then((response) => response.json()).then(({ voice }) => {
   refreshAiConnectionStatus();
 }).catch((error) => status(error.message, true));
 
+// Captures that were already auto-polished: never polish (and rewrite) them twice.
+const POLISHED_KEY = "stepfilm-polished-captures";
+function polishedCaptures() { try { const list = JSON.parse(localStorage.getItem(POLISHED_KEY)); return Array.isArray(list) ? list : []; } catch (_) { return []; } }
+function wasPolished(captureId) { return Boolean(captureId) && polishedCaptures().includes(captureId); }
+function markPolished(captureId) { if (!captureId) return; try { localStorage.setItem(POLISHED_KEY, JSON.stringify([...polishedCaptures().filter((id) => id !== captureId), captureId].slice(-50))); } catch (_) {} }
 const captureLatest = new URLSearchParams(location.search).get("capture") === "latest";
 if (!captureLatest) {
   try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (saved?.steps?.length) loadGuide(saved); } catch (_) {}
@@ -1504,7 +1518,18 @@ if (!captureLatest) {
     if (!response.ok) throw new Error("No captured workflow is waiting in Stepfilm.");
     return response.json();
   }).then(async (capture) => {
+    const captureId = typeof capture.captureId === "string" ? capture.captureId : "";
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (_) {}
+    if (captureId && saved?.captureId === captureId && saved.steps?.length) {
+      // Same recording as the saved draft: keep the user's edits and wording.
+      loadGuide(saved);
+      history.replaceState(null, "", "/");
+      status("Reopened your saved draft of this recording, with your edits.");
+      return;
+    }
     const built = globalThis.StepfilmAutoGuide ? StepfilmAutoGuide.build(capture) : capture;
+    if (captureId) built.captureId = captureId;
     loadGuide(built);
     if (built.title !== capture.title) { guide.autoTitle = true; }
     // Later reloads should reopen this draft (with edits), not the raw capture.
@@ -1514,6 +1539,6 @@ if (!captureLatest) {
     showAutoGuideSummary(built.autoGuide, provider);
     status(built.autoGuide?.written ? "Your step-by-step tutorial was generated from the recording. Review any step, then export." : "Capture opened. Add a sentence to each step, or connect AI to describe them.");
     // A ChatGPT plan has no per-call billing in Stepfilm, so polish automatically.
-    if (provider === "chatgpt" && guide.steps.some((step) => step.kind !== "video")) draftWithAi({ automatic: true });
+    if (provider === "chatgpt" && guide.steps.some((step) => step.kind !== "video") && !wasPolished(captureId)) { markPolished(captureId); draftWithAi({ automatic: true }); }
   }).catch(() => { showEmptyState(); status("No pending capture. Start a new capture from the Chrome extension."); });
 }

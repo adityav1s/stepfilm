@@ -24,7 +24,7 @@ BADGE_FADE = (0.0, 0.35)
 CROSSFADE = 0.3
 TAIL = 0.7               # silence held after the voice ends
 MIN_SCENE = 2.8
-CARD_LEAD = 0.4           # intro/outro voice starts as the title lands
+CARD_LEAD = 0.3           # intro/outro voice starts as the title lands
 INSET = 0.9              # zoomed-out screenshot sits as a card inside the branded frame
 
 
@@ -70,7 +70,7 @@ def frame_times(duration, fps=FPS):
 
 
 def card_duration(audio_duration):
-    return round(max(2.4, CARD_LEAD + max(0.0, float(audio_duration or 0)) + 0.6), 3)
+    return round(max(2.0, CARD_LEAD + max(0.0, float(audio_duration or 0)) + 0.4), 3)
 
 
 # --------------------------------------------------------------------------
@@ -175,7 +175,7 @@ def camera_at(t, image_w, image_h, focus, animate=True, ken_burns=False, duratio
     return cx, cy, scale
 
 
-def safe_nudge(frame_box, width=WIDTH, height=HEIGHT, top=104, bottom=150, side=36):
+def safe_nudge(frame_box, width=WIDTH, height=HEIGHT, top=64, bottom=150, side=36):
     """Frame-pixel shift (dx, dy) of the camera centre that brings a target box inside the safe area."""
     x0, y0, x1, y1 = frame_box
     dx = dy = 0.0
@@ -291,3 +291,33 @@ def caption_chunks(text, audio_duration, max_words=14):
         cursor += length
     cues[-1]["end"] = round(cues[-1]["end"] + TAIL * 0.8, 3)
     return cues
+
+
+def _caption_key(text):
+    # Same as guide-player.js: drop trailing whitespace/.!?…, collapse spaces, trim, lowercase.
+    return re.sub(r"\s+", " ", re.sub(r"[\s.!?…]+$", "", str(text or ""))).strip().lower()
+
+
+def callout_repeats_narration(step):
+    """True when a callout on the step already shows the narration sentence.
+
+    Rule shared with the in-editor player (StepfilmPlayer): compare the
+    callout text with the narration, ignoring case, repeated whitespace and
+    trailing punctuation; equal means the caption is not burned in.
+    """
+    narration = _caption_key(step.get("text", ""))
+    if not narration:
+        return False
+    for annotation in step.get("annotations") or []:
+        if isinstance(annotation, dict) and annotation.get("type") == "callout" and _caption_key(annotation.get("text")) == narration:
+            return True
+    return False
+
+
+def burn_captions(step, mode="auto"):
+    """Whether to burn narration captions for a screenshot step. mode: auto | always | off."""
+    if mode == "off":
+        return False
+    if mode == "always":
+        return True
+    return not callout_repeats_narration(step)

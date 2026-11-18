@@ -18,11 +18,22 @@ On macOS, you can also double-click `Start-Stepfilm.command` in this folder. Kee
 
 On Windows, use `py server.py`. The editor opens at http://127.0.0.1:8765. Keep the terminal open while you use it. Use `--port 0` if that port is taken.
 
-For Piper, install `piper-tts`, download a voice model and its matching config, and start Stepfilm with the model path:
+### Natural narration voices (Piper, optional, no API key)
+
+Stepfilm narrates with [Piper](https://github.com/rhasspy/piper), a local neural text-to-speech engine, when it is installed. Otherwise it uses the best installed macOS voice (Premium/Enhanced first, then Samantha). Install Piper in its own virtual environment and add one or more voices:
 
 ```sh
-python3 server.py --piper-model /path/to/voice.onnx
+python3 -m venv ~/.stepfilm/piper-venv
+~/.stepfilm/piper-venv/bin/pip install piper-tts
+mkdir -p ~/.stepfilm/voices && cd ~/.stepfilm/voices
+for v in en/en_US/lessac/high/en_US-lessac-high en/en_US/amy/medium/en_US-amy-medium \
+         en/en_US/hfc_female/medium/en_US-hfc_female-medium en/en_US/ryan/high/en_US-ryan-high; do
+  curl -LO "https://huggingface.co/rhasspy/piper-voices/resolve/main/$v.onnx"
+  curl -LO "https://huggingface.co/rhasspy/piper-voices/resolve/main/$v.onnx.json"
+done
 ```
+
+Restart Stepfilm. It finds Piper automatically (`STEPFILM_PIPER`, then `~/.stepfilm/piper-venv/bin/piper`, then `PATH`) and its voices (`STEPFILM_VOICES_DIR`, default `~/.stepfilm/voices`; each `.onnx` needs its `.onnx.json`). Lessac is the default; choose another voice in the editor, or set `STEPFILM_VOICE` (for example `piper:en_US-ryan-high` or `Samantha`). `python3 server.py --piper-model /path/to/voice.onnx` still works for a single model.
 
 ## Capture from Chrome
 

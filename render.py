@@ -71,6 +71,50 @@ def best_voice(voices, override=None):
     return ranked[0]["name"] if ranked else None
 
 
+PIPER_LABELS = {
+    "en_US-lessac-high": "Lessac (natural)",
+    "en_US-lessac-medium": "Lessac (natural)",
+    "en_US-amy-medium": "Amy (natural)",
+    "en_US-hfc_female-medium": "HFC female (natural)",
+    "en_US-ryan-high": "Ryan (natural, male)",
+}
+PIPER_ORDER = ["en_US-lessac-high", "en_US-lessac-medium", "en_US-amy-medium", "en_US-hfc_female-medium", "en_US-ryan-high"]
+PIPER_LENGTH = {"slower": 1.12, "natural": 1.0, "brisk": 0.9}
+
+
+def find_piper(env=None):
+    """Locate a Piper binary: STEPFILM_PIPER, ~/.stepfilm/piper-venv/bin/piper, then PATH."""
+    env = os.environ if env is None else env
+    candidates = [env.get("STEPFILM_PIPER", ""), str(Path.home() / ".stepfilm" / "piper-venv" / "bin" / "piper"), shutil.which("piper") or ""]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def find_piper_voices(env=None):
+    """Piper models (*.onnx with a matching .onnx.json) from STEPFILM_VOICES_DIR or ~/.stepfilm/voices."""
+    env = os.environ if env is None else env
+    folder = Path(env.get("STEPFILM_VOICES_DIR") or (Path.home() / ".stepfilm" / "voices"))
+    voices = []
+    if folder.is_dir():
+        for model in sorted(folder.glob("*.onnx")):
+            if Path(f"{model}.json").is_file():
+                voices.append(piper_voice_entry(model))
+    voices.sort(key=lambda voice: (PIPER_ORDER.index(voice["model_name"]) if voice["model_name"] in PIPER_ORDER else len(PIPER_ORDER), voice["model_name"]))
+    return voices
+
+
+def piper_voice_entry(model):
+    model = Path(model)
+    stem = model.name[:-5] if model.name.endswith(".onnx") else model.stem
+    parts = stem.split("-")
+    locale = parts[0] if parts and re.fullmatch(r"[a-z]{2,3}_[A-Z]{2}", parts[0]) else ""
+    label = PIPER_LABELS.get(stem) or (f"{parts[1].replace('_', ' ').title()} (natural)" if len(parts) > 1 else f"{stem} (natural)")
+    return {"id": f"piper:{stem}", "name": label, "label": label, "engine": "piper", "locale": locale,
+            "quality": "natural", "model": str(model), "model_name": stem}
+
+
 def speech_text(text):
     """Small clean-ups so local TTS reads UI copy naturally."""
     text = guide_motion.humanize_urls(str(text or "").strip())
@@ -181,27 +225,42 @@ class Renderer:
         if not self.ffmpeg or not self.ffprobe:
             raise ValueError("Install FFmpeg and make sure ffmpeg and ffprobe are on your PATH.")
         self.model = model
-        self.voices = []
+        self.voices = []          # macOS say voices
+        self.piper_voices = []    # Piper neural voices
         self.voice = None
         self._preview_cache = OrderedDict()
         self._preview_lock = threading.Lock()
-        self.piper = shutil.which("piper") if model else None
+        self.piper = find_piper()
         if model:
             if not self.piper or not model.is_file() or not Path(f"{model}.json").is_file():
                 raise ValueError("Piper requires the piper command, a voice .onnx file, and its matching .onnx.json file.")
-            self.engine = "Piper"
-        elif sys.platform == "darwin" and shutil.which("say"):
-            self.engine = "macOS speech"
+            self.piper_voices = [piper_voice_entry(model)]
+        elif self.piper:
+            self.piper_voices = find_piper_voices()
+        if sys.platform == "darwin" and shutil.which("say"):
             try:
                 listing = subprocess.check_output(["say", "-v", "?"], text=True, timeout=15)
             except (subprocess.SubprocessError, OSError):
                 listing = ""
             self.voices = parse_say_voices(listing)
-            self.voice = best_voice(self.voices, os.environ.get("STEPFILM_VOICE", "").strip() or None)
+        override = os.environ.get("STEPFILM_VOICE", "").strip() or None
+        piper_ids = [voice["id"] for voice in self.piper_voices]
+        if override and (override in piper_ids or f"piper:{override}" in piper_ids):
+            self.voice = override if override in piper_ids else f"piper:{override}"
+        elif override and override in {voice["name"] for voice in self.voices}:
+            self.voice = override
+        elif piper_ids:
+            self.voice = piper_ids[0]
+        else:
+            self.voice = best_voice(self.voices)
+        if self.voice and self.voice.startswith("piper:"):
+            self.engine = "Piper"
+        elif self.voices:
+            self.engine = "macOS speech"
         else:
             filters = subprocess.check_output([self.ffmpeg, "-hide_banner", "-filters"], text=True, timeout=15)
             if not re.search(r"\bflite\s", filters):
-                raise ValueError("Use an FFmpeg build with the flite filter or start Stepfilm with --piper-model.")
+                raise ValueError("Use an FFmpeg build with the flite filter, or install Piper (see README).")
             self.engine = "Flite"
 
     def ff(self, folder, *args):
@@ -322,20 +381,33 @@ class Renderer:
         filters[-1] = filters[-1].replace(previous, "[vout]")
         return inputs, ";".join(filters)
 
+    def voice_name(self, voice_id):
+        for voice in self.piper_voices:
+            if voice["id"] == voice_id:
+                return voice["label"]
+        return voice_id
+
     @property
     def voice_label(self):
-        return f"{self.engine} ({self.voice})" if self.voice else self.engine
+        return f"{self.engine} · {self.voice_name(self.voice)}" if self.voice else self.engine
 
     def voice_list(self):
-        """Narration-quality voices, best first (macOS only)."""
-        return [{**voice, "default": voice["name"] == self.voice} for voice in narration_voices(self.voices)]
+        """Natural Piper voices first, then narration-quality macOS voices."""
+        piper = [{key: voice[key] for key in ("id", "name", "label", "engine", "locale", "quality")} | {"default": voice["id"] == self.voice, "natural": True}
+                 for voice in self.piper_voices]
+        system = [{"id": voice["name"], "name": voice["name"], "label": voice["name"], "engine": "say", "locale": voice["locale"],
+                   "quality": voice["quality"], "default": voice["name"] == self.voice, "natural": False} for voice in narration_voices(self.voices)]
+        return piper + system
 
     def resolve_voice(self, voice=None):
         if voice in (None, ""):
             return self.voice
-        if not isinstance(voice, str) or voice not in {item["name"] for item in self.voices}:
-            raise ValueError("That voice is not installed on this Mac. Choose one from the voice list.")
-        return voice
+        if isinstance(voice, str):
+            if voice in {item["id"] for item in self.piper_voices}:
+                return voice
+            if voice in {item["name"] for item in self.voices}:
+                return voice
+        raise ValueError("That voice is not installed on this computer. Choose one from the voice list.")
 
     def speech(self, folder, text, output, pace="natural", voice=None):
         folder = Path(folder)
@@ -345,18 +417,32 @@ class Renderer:
             return
         line = folder / f"{Path(output).stem}.txt"
         line.write_text(text, encoding="utf-8")
-        if self.piper:
-            subprocess.run([self.piper, "--model", str(self.model), "--output_file", output],
-                           cwd=folder, input=text, text=True, check=True, capture_output=True, timeout=90)
-        elif self.engine == "macOS speech":
+        chosen = self.resolve_voice(voice)
+        piper_voice = next((item for item in self.piper_voices if item["id"] == chosen), None)
+        if piper_voice and self.piper:
+            subprocess.run([self.piper, "--model", piper_voice["model"], "--output_file", output,
+                            "--length_scale", str(PIPER_LENGTH.get(pace, 1.0)), "--sentence_silence", "0.25"],
+                           cwd=folder, input=text, text=True, check=True, capture_output=True, timeout=120)
+        elif self.voices:
             command = ["say", "-f", line.name, "-o", output, "--file-format=WAVE", "--data-format=LEI16@44100",
                        "-r", str(VOICE_RATES.get(pace, VOICE_RATES["natural"]))]
-            chosen = self.resolve_voice(voice)
-            if chosen:
+            if chosen and not chosen.startswith("piper:"):
                 command[1:1] = ["-v", chosen]
             subprocess.run(command, cwd=folder, check=True, capture_output=True, timeout=90)
         else:
             self.ff(folder, "-f", "lavfi", "-i", f"flite=textfile={line.name}:voice=slt", output)
+
+    def trim_silence(self, folder, audio):
+        """Trim leading/trailing silence so scenes end a beat after the voice, not after TTS padding."""
+        trimmed = Path(folder) / f"{Path(audio).stem}.trim.wav"
+        try:
+            self.ff(folder, "-i", str(audio), "-af",
+                    "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse,"
+                    "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.08,areverse",
+                    "-ac", "1", "-ar", "44100", str(trimmed))
+        except subprocess.SubprocessError:
+            return Path(audio)
+        return trimmed if trimmed.is_file() and trimmed.stat().st_size > 2000 else Path(audio)
 
     def step_audio(self, folder, step, voice=None):
         voiceover = step.get("voiceover", "")
@@ -535,11 +621,14 @@ class Renderer:
                 if not text:
                     return None, 0.0
                 self.speech(sub, text, "card.wav", **({"voice": voice} if voice else {}))
-                return sub / "card.wav", self.audio_duration(sub, sub / "card.wav")
+                card = self.trim_silence(sub, sub / "card.wav")
+                return card, self.audio_duration(sub, card)
             step = steps[index]
             if not str(step.get("text", "")).strip() and step.get("audioSource") not in {"recorded", "synthetic"}:
                 return None, 0.0
             audio = sub / self.step_audio(sub, step, voice)
+            if step.get("audioSource") not in {"recorded", "synthetic"}:
+                audio = self.trim_silence(sub, audio)
             duration = self.audio_duration(sub, audio)
             if duration <= 0:
                 raise RuntimeError("Local speech produced an empty audio track. Check macOS speech permissions or use blank narration for a silent scene.")
@@ -580,7 +669,8 @@ class Renderer:
             has_target = point is not None or guide_motion.target_box(step) is not None
             duration = guide_motion.scene_duration(voice_length, has_target)
             lead = guide_motion.AUDIO_LEAD
-            cues = self.step_cues(step, voice_length, lead)
+            caption_mode = brand.get("captions") if brand.get("captions") in {"auto", "always", "off"} else "auto"
+            cues = self.step_cues(step, voice_length, lead) if guide_motion.burn_captions(step, caption_mode) else []
             drawer = guide_frames.ScreenshotScene(image, step, index + 1, screenshot_total, theme, duration, cues, prev_point)
             if point is not None:
                 prev_point = point
@@ -612,7 +702,9 @@ class Renderer:
             audio_durations.append(voice_length)
             scene_durations.append(self._duration(path))
         self.last_export_caption_tracks = build_export_caption_tracks(caption_steps, audio_durations, scene_durations)
-        self.last_export_scenes = [{"kind": kind, "start": round(sum(scene_durations[:i]), 3), "duration": round(scene_durations[i], 3)}
+        self.last_export_scenes = [{"kind": kind, "start": round(sum(scene_durations[:i]), 3), "duration": round(scene_durations[i], 3),
+                                    **({"badge": list(scenes[i]["drawer"].badge_pos)} if kind == "step" else {}),
+                                    **({"captions": bool(scenes[i]["drawer"].cues)} if kind == "step" else {})}
                                    for i, (kind, _) in enumerate(plan)]
         (folder / "segments.txt").write_text("\n".join(segments) + "\n", encoding="utf-8")
         self.ff(folder, "-f", "concat", "-safe", "1", "-i", "segments.txt",

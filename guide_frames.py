@@ -11,7 +11,7 @@ import base64
 import re
 from io import BytesIO
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
 
 import guide_motion as M
 
@@ -218,22 +218,38 @@ def ring_sprite(radius, width, color, alpha, fill=None):
 
 
 def badge_layer(theme, number, total):
-    layer = Image.new("RGBA", (360, 80), (0, 0, 0, 0))
-    ss = 2
-    big = Image.new("RGBA", (360 * ss, 80 * ss), (0, 0, 0, 0))
+    """Compact step badge: accent number disc + "N of M" on a translucent pill (about 120x34 px)."""
+    ss = 3
+    label = f"{number} of {total}" if total else f"Step {number}"
+    label_font = font("demi", 16 * ss)
+    height = 34
+    text_w = label_font.getlength(label) / ss
+    width = int(4 + 26 + 8 + text_w + 12)
+    big = Image.new("RGBA", (width * ss, height * ss), (0, 0, 0, 0))
     draw = ImageDraw.Draw(big)
-    label = f"Step {number} of {total}" if total else f"Step {number}"
-    label_font = font("demi", 22 * ss)
-    text_w = label_font.getlength(label)
-    pill_w = int(56 * ss + text_w + 22 * ss)
-    draw.rounded_rectangle((0, 0, pill_w, 52 * ss), radius=26 * ss, fill=(12, 16, 26, 205))
-    draw.ellipse((6 * ss, 6 * ss, 46 * ss, 46 * ss), fill=(*theme.accent, 255))
-    num_font = font("bold", 22 * ss)
-    num = str(number)
-    draw.text((26 * ss, 26 * ss), num, font=num_font, fill=(*theme.on_accent, 255), anchor="mm")
-    draw.text((56 * ss, 26 * ss), label, font=label_font, fill=(255, 255, 255, 255), anchor="lm")
-    layer = big.resize((360, 80), Image.Resampling.LANCZOS)
-    return layer
+    draw.rounded_rectangle((0, 0, width * ss - 1, height * ss - 1), radius=height * ss // 2, fill=(12, 16, 26, 178))
+    draw.ellipse((4 * ss, 4 * ss, 30 * ss, 30 * ss), fill=(*theme.accent, 255))
+    draw.text((17 * ss, 17 * ss), str(number), font=font("bold", 16 * ss), fill=(*theme.on_accent, 255), anchor="mm")
+    draw.text((38 * ss, 17 * ss), label, font=label_font, fill=(255, 255, 255, 235), anchor="lm")
+    return big.resize((width, height), Image.Resampling.LANCZOS)
+
+
+def least_busy_corner(frame, size, blocked, margin=20):
+    """Corner (x, y) for a badge of `size` whose region is the calmest (lowest luminance
+    spread) and does not touch any `blocked` rectangle (target, callout, captions, logo)."""
+    bw, bh = size
+    corners = [(margin, margin), (W - margin - bw, margin), (margin, H - margin - bh), (W - margin - bw, H - margin - bh)]
+    gray = frame.convert("L")
+    best = None
+    for order, (x, y) in enumerate(corners):
+        rect = (x - 8, y - 8, x + bw + 8, y + bh + 8)
+        if any(not (rect[2] <= b[0] or rect[0] >= b[2] or rect[3] <= b[1] or rect[1] >= b[3]) for b in blocked):
+            continue
+        stat = ImageStat.Stat(gray.crop((x, y, x + bw, y + bh)))
+        score = stat.stddev[0] + order * 2.0  # prefer top-left on ties
+        if best is None or score < best[0]:
+            best = (score, (x, y))
+    return best[1] if best else corners[0]
 
 
 def caption_layer(text):
@@ -269,7 +285,7 @@ def chrome_layer(theme):
 # Screenshot scene
 
 
-CALLOUT_SAFE = (28, 92, W - 28, H - 150)   # clear of the step badge (top) and captions (bottom)
+CALLOUT_SAFE = (28, 60, W - 28, H - 150)   # clear of the brand bar (top) and captions (bottom)
 CALLOUT_FONT, CALLOUT_LINE, CALLOUT_PAD_X, CALLOUT_PAD_Y = 24, 32, 20, 14
 CALLOUT_GAP = 24
 
@@ -371,11 +387,16 @@ class ScreenshotScene:
         self._captions = {}
         self.prev_frame = None
         self._build_overlays()
-        self.badge_pos = (28, 26)
+        blocked = list(self.occupied)
         if self.target and not self.ken_burns:
             x0, y0, x1, y1 = M.box_to_frame(self.target, self.final_camera, self.iw, self.ih)
-            if x0 < 28 + self.badge.width and y0 < 26 + 60:
-                self.badge_pos = (W - 28 - 230, 26) if theme.logo is None else (28, H - 26 - 60)
+            blocked.append((x0 - 12, y0 - 12, x1 + 12, y1 + 12))
+        if self.cues:
+            widest = max(self.caption(index)[0].width for index in range(len(self.cues)) if self.caption(index)[0] is not None) if any(cue["text"] for cue in self.cues) else 0
+            blocked.append(((W - widest) / 2, H - 150, (W + widest) / 2, H))
+        if theme.logo is not None:
+            blocked.append((W - theme.logo.width - 48, 0, W, theme.logo.height + 40))
+        self.badge_pos = least_busy_corner(self.base(self.final_camera), self.badge.size, blocked)
         self.static_from = max(M.CALLOUT_FADE[1], M.CLICK_AT + M.RIPPLE_LENGTH, M.CURSOR_END) + 0.01
         self._static_cache = {}
 
@@ -493,7 +514,7 @@ class ScreenshotScene:
         callouts = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         has_callout = False
         target_frame = to_frame(self.target) if self.target else None
-        occupied = []
+        occupied = self.occupied = []
         for annotation in self.annotations:
             kind = annotation.get("type")
             if kind == "callout":

@@ -1,5 +1,6 @@
 """Guidde-style video renderer: timing, camera, cursor path, redaction, voices, full render."""
 import base64
+import sys
 import json
 import shutil
 import subprocess
@@ -21,7 +22,7 @@ short, long = M.scene_duration(0.8), M.scene_duration(6.0)
 assert short == M.MIN_SCENE, short  # choreography never cut short
 assert abs(long - (M.AUDIO_LEAD + 6.0 + M.TAIL)) < 1e-6, long  # scene follows the voiceover
 assert M.CLICK_AT < M.SPOTLIGHT_FADE[1] <= M.CALLOUT_FADE[1] < M.MIN_SCENE
-assert M.card_duration(3.0) > 3.0 and M.card_duration(0) <= 2.6 and M.card_duration(3.0) <= 4.1, "cards hold only narration + a beat"
+assert M.card_duration(3.0) > 3.0 and M.card_duration(0) <= 2.0 and M.card_duration(3.0) <= 3.75, "cards hold only narration + a beat"
 cues = M.caption_chunks("Open the billing page. Then choose the plan you want and confirm the change with the blue button at the bottom.", 6.0)
 assert len(cues) >= 2 and cues[0]["start"] == M.AUDIO_LEAD
 assert all(a["end"] <= b["start"] + 1e-6 for a, b in zip(cues, cues[1:]))
@@ -150,6 +151,80 @@ assert M.humanize_urls("Open todomvc.com/examples/react now") == "Open Todomvc n
 assert M.humanize_urls("Save report.pdf") == "Save report.pdf"
 assert "http" not in " ".join(c["text"] for c in M.caption_chunks("Go to https://example.com/a/b?c=1 to begin", 2.0))
 
+# ---- captions vs callouts (same rule as the player) -------------------------
+dup = {"text": "Click  Save changes. ", "annotations": [{"type": "callout", "text": "click save changes", "origin": "action"}]}
+assert M.callout_repeats_narration(dup) and not M.burn_captions(dup)
+assert M.burn_captions(dup, "always") and not M.burn_captions({"text": "x", "annotations": []}, "off")
+assert M.burn_captions({"text": "Click Save changes to keep the plan", "annotations": [{"type": "callout", "text": "Save changes"}]})
+
+# ---- badge never sits on the target or callout -----------------------------
+for scene_ in (scene, edge, check):
+    bx, by = scene_.badge_pos
+    bw, bh = scene_.badge.size
+    assert bw <= 140 and bh <= 36, "badge stays compact"
+    badge_rect = (bx, by, bx + bw, by + bh)
+    rects = list(scene_.occupied)
+    if scene_.target:
+        rects.append(M.box_to_frame(scene_.target, scene_.final_camera, scene_.iw, scene_.ih))
+    for r in rects:
+        assert badge_rect[2] <= r[0] or badge_rect[0] >= r[2] or badge_rect[3] <= r[1] or badge_rect[1] >= r[3], ("badge overlaps", badge_rect, r)
+busy = Image.new("RGB", (1600, 1000), "white")
+noise = ImageDraw.Draw(busy)
+for x in range(0, 500, 6):
+    noise.line((x, 0, x, 200), fill=(0, 0, 0))  # busy logo-like area top-left
+calm = F.ScreenshotScene(busy, {"text": "Look around", "action": {"type": "navigate"}}, 1, 2, F.Theme({}), 3.0, [], None)
+assert calm.badge_pos[0] > M.WIDTH / 2 or calm.badge_pos[1] > M.HEIGHT / 2, ("badge avoids the busy corner", calm.badge_pos)
+
+# ---- voices: Piper discovered automatically, macOS say as fallback ------------
+import os, stat
+with tempfile.TemporaryDirectory() as temp:
+    temp = Path(temp)
+    log = temp / "piper.log"
+    fake = temp / "piper"
+    fake.write_text("#!/bin/sh\n" f"echo \"$@\" >> {log}\n" 'out=""; while [ $# -gt 0 ]; do [ "$1" = "--output_file" ] && out="$2"; shift; done\n'
+                    f"cat > /dev/null; {shutil.which('ffmpeg') or 'ffmpeg'} -v error -y -f lavfi -i sine=frequency=300:duration=1.1 \"$out\"\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    voices_dir = temp / "voices"
+    voices_dir.mkdir()
+    for model in ("en_US-amy-medium", "en_US-lessac-high", "en_US-ryan-high"):
+        (voices_dir / f"{model}.onnx").write_bytes(b"x")
+        (voices_dir / f"{model}.onnx.json").write_text("{}")
+    (voices_dir / "orphan.onnx").write_bytes(b"x")  # no config: ignored
+    saved = {key: os.environ.get(key) for key in ("STEPFILM_PIPER", "STEPFILM_VOICES_DIR", "STEPFILM_VOICE")}
+    try:
+        os.environ.update({"STEPFILM_PIPER": str(fake), "STEPFILM_VOICES_DIR": str(voices_dir)})
+        os.environ.pop("STEPFILM_VOICE", None)
+        piper_renderer = Renderer()
+        listed = piper_renderer.voice_list()
+        assert [v["id"] for v in listed[:3]] == ["piper:en_US-lessac-high", "piper:en_US-amy-medium", "piper:en_US-ryan-high"], listed[:3]
+        assert listed[0]["label"] == "Lessac (natural)" and listed[0]["natural"] and listed[0]["default"]
+        assert listed[2]["label"] == "Ryan (natural, male)"
+        assert piper_renderer.voice == "piper:en_US-lessac-high" and piper_renderer.engine == "Piper"
+        assert all(not v["natural"] for v in listed[3:])
+        audio = piper_renderer.preview("Click Save changes.", "piper:en_US-amy-medium", "slower")
+        assert audio[:4] == b"RIFF" and "en_US-amy-medium.onnx" in log.read_text() and "--length_scale 1.12" in log.read_text()
+        calls_before = log.read_text().count("\n")
+        assert piper_renderer.preview("Click Save changes.", "piper:en_US-amy-medium", "slower") == audio
+        assert log.read_text().count("\n") == calls_before, "preview is cached by text + voice + pace"
+        try:
+            piper_renderer.preview("hi", "piper:nope")
+            raise AssertionError("unknown voice accepted")
+        except ValueError:
+            pass
+        os.environ["STEPFILM_PIPER"] = str(temp / "missing-piper")
+        os.environ["STEPFILM_VOICES_DIR"] = str(temp / "no-voices")
+        fallback = Renderer()
+        if fallback.piper is None:
+            assert not fallback.piper_voices and (fallback.voice is None or not fallback.voice.startswith("piper:"))
+            if sys.platform == "darwin":
+                assert fallback.engine == "macOS speech" and fallback.voice, fallback.voice
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
 # ---- full render: intro, animated steps, outro ----------------------------
 if not shutil.which("ffmpeg"):
     print("guide video: PASS (unit only; FFmpeg unavailable)")
@@ -187,7 +262,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert grab(step_start + 0.3).tobytes() != grab(step_start + 3.0).tobytes(), "screenshot scene is animated"
     for scene in [scene for scene in scenes if scene["kind"] == "step"]:
         frame = grab(scene["start"] + 1.6)
-        badge_dots = [frame.getpixel((x, y)) for x in range(44, 66, 3) for y in range(42, 64, 3)]
-        badge_dots += [frame.getpixel((x, y)) for x in range(M.WIDTH - 236, M.WIDTH - 214, 3) for y in range(42, 64, 3)]
+        bx, by = scene["badge"]
+        badge_dots = [frame.getpixel((x, y)) for x in range(bx + 8, bx + 27, 2) for y in range(by + 8, by + 27, 2)]
         assert any(r > 200 and g < 110 and 60 < b < 150 for r, g, b in badge_dots), ("step badge in brand accent missing", scene)
 print("guide video: PASS (timing, eased camera, cursor arc, ripple, redaction baked first, voice ranking, intro/steps/outro render)")

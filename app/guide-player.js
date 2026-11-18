@@ -580,7 +580,11 @@
     toggle() { if (this.playing) this.pause(); else this.play(); }
 
     updateCaption() {
-      const text = this.scene?.kind === "intro" || this.scene?.kind === "outro" ? "" : this.scene?.text || "";
+      let text = this.scene?.kind === "intro" || this.scene?.kind === "outro" ? "" : this.scene?.text || "";
+      // Don't show the same words twice: skip the caption when the step's
+      // callout already shows the narration.
+      const same = (a, b) => String(a || "").replace(/[\s.!?…]+$/g, "").replace(/\s+/g, " ").trim().toLowerCase() === String(b || "").replace(/[\s.!?…]+$/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+      if (text && this.scene?.kind === "step" && (this.scene.step.annotations || []).some((a) => a.type === "callout" && same(a.text, text))) text = "";
       this.caption.textContent = text;
       this.caption.hidden = !this.captionsOn || !text || (this.scene?.kind === "step" && this.t < this.scene.voiceAt - 0.2);
     }

@@ -60,6 +60,7 @@
       theme: ["clean", "editorial", "bold"].includes(incomingBrand.theme) ? incomingBrand.theme : "clean",
       accent: typeof incomingBrand.accent === "string" && /^#[0-9a-f]{6}$/i.test(incomingBrand.accent) ? incomingBrand.accent : "#6d8eff",
       titleStyle: ["standard", "compact", "display"].includes(incomingBrand.titleStyle) ? incomingBrand.titleStyle : "standard",
+      captions: ["auto", "always", "off"].includes(incomingBrand.captions) ? incomingBrand.captions : "auto",
       logo: typeof incomingBrand.logo === "string" && incomingBrand.logo.length <= 500000 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(incomingBrand.logo) ? incomingBrand.logo : "",
     };
     const stepIds = new Set();
