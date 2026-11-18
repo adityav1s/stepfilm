@@ -92,6 +92,17 @@ def _pre_action_frames_test():
     print("pre-action frames: PASS (pre-click frame used, fallbacks correct)")
 
 
+def _scroll_at_click_test():
+    from auto_steps import apply_pre_action_frames
+    steps = [{"at": 1.0, "image": "shot", "action": {"type": "click", "recentScroll": True, "rect": {"x": .1, "y": .1, "width": .1, "height": .1}, "shotRect": {"x": .1, "y": .6, "width": .1, "height": .1}}},
+             {"at": 2.0, "image": "shot2", "action": {"type": "click", "recentScroll": True, "rect": {"x": .1, "y": .1, "width": .1, "height": .1}}}]
+    apply_pre_action_frames(steps, "ffmpeg-not-called", "/nonexistent.webm")
+    assert steps[0]["image"] == "shot" and steps[0]["action"]["rect"]["y"] == .6 and "stale" not in steps[0]["action"], "scrolling click uses the re-measured screenshot"
+    assert steps[1]["image"] == "shot2" and steps[1]["action"]["stale"] is True, "unmeasured scrolling click shows no (possibly wrong) highlight"
+    print("scroll-at-click frames: PASS")
+
+
 if __name__ == "__main__":
     _pre_action_frames_test()
+    _scroll_at_click_test()
     unittest.main()

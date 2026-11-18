@@ -29,13 +29,24 @@ function status(message, error = false) {
   ui.status.classList.toggle("error", error);
 }
 
-async function api(path, body, type = "application/json") {
+async function api(path, body, type = "application/json", { timeoutMs = 0 } = {}) {
   const options = body === undefined ? {} : {
     method: "POST",
     headers: { "Content-Type": type },
     body: type === "application/json" ? JSON.stringify(body) : body,
   };
-  const response = await fetch(path, options);
+  let timer;
+  if (timeoutMs) {
+    const controller = new AbortController();
+    options.signal = controller.signal;
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+  }
+  let response;
+  try { response = await fetch(path, options); }
+  catch (error) {
+    if (error?.name === "AbortError") throw new Error(`no answer from the AI service after ${Math.round(timeoutMs / 1000)} seconds (it may be busy or your connection is slow). Try "Improve wording with AI" again later`);
+    throw error;
+  } finally { clearTimeout(timer); }
   if (!response.ok) {
     const details = await response.json().catch(() => ({}));
     throw new Error(details.error || "The local editor could not complete the request.");
@@ -946,7 +957,7 @@ async function draftWithAi({ automatic = false } = {}) {
   ui.autoGuideImprove.disabled = true; ui.autoGuideImprove.textContent = "Improving with AI…";
   const stopProgress = showPolishProgress();
   try {
-    const response = await api("/api/ai/draft", { title: guide.title, steps: guide.steps.map((step) => ({ ...step, image: step.sourceImage || step.image })) });
+    const response = await api("/api/ai/draft", { title: guide.title, steps: guide.steps.map((step) => ({ ...step, image: step.sourceImage || step.image })) }, "application/json", { timeoutMs: 150000 });
     const result = await response.json();
     if (!guide.titleEdited) {
       const previousIntro = globalThis.StepfilmAutoGuide ? StepfilmAutoGuide.introFor(guide.title) : "";
@@ -1001,7 +1012,11 @@ async function draftWithAi({ automatic = false } = {}) {
     status(`AI rewrote ${improved} step${improved === 1 ? "" : "s"} using what you clicked. Review each suggestion.${skipped ? ` ${skipped} video step${skipped === 1 ? " was" : "s were"} skipped; use Analyze this video step for clips.` : ""}`);
     ui.autoGuideDetail.textContent = `AI polished ${improved} step${improved === 1 ? "" : "s"} using your recorded clicks. Review the wording, then export.`;
     return true;
-  } catch (error) { status(automatic ? `Stepfilm wrote the steps from your clicks. AI polishing was skipped: ${error.message}` : error.message, true); return false; }
+  } catch (error) {
+    status(automatic ? `Your guide is ready with the steps written from your clicks. AI polishing was skipped: ${error.message}.` : error.message, true);
+    ui.autoGuideDetail.textContent = `AI polishing didn't finish (${error.message}). The steps written from your clicks are ready to play and export.`;
+    return false;
+  }
   finally { stopProgress(); ui.aiDraft.disabled = false; ui.aiDraft.textContent = "Rewrite steps with AI"; ui.autoGuideImprove.disabled = false; ui.autoGuideImprove.textContent = "Improve wording with AI"; }
 }
 // AI polishing takes ~20–40s: show it, keep the editor and Play usable.
@@ -1034,7 +1049,9 @@ function showAutoGuideSummary(summary, provider) {
   const { written, highlighted, scenes, total } = summary;
   ui.autoGuideHeadline.textContent = scenes && !written ? `Found ${scenes} screen change${scenes === 1 ? "" : "s"} in your recording` : `Stepfilm wrote ${written} of ${total} step${total === 1 ? "" : "s"} from your clicks`;
   const parts = [];
-  if (highlighted) parts.push(`highlighted ${highlighted} clicked element${highlighted === 1 ? "" : "s"} in your guide and video, with the video zooming in on each`);
+  // Say which steps are marked, so unmarked ones (page loads, the start
+  // page) don't look like something went wrong.
+  if (highlighted) parts.push(`marked what you clicked or typed in ${highlighted} of ${total} steps (page-load steps don't need a marker), with the video zooming in on each`);
   parts.push("each step is narrated aloud — press Play guide to watch and hear it");
   let detail = `${parts.join("; ")}.`.replace(/^./, (c) => c.toUpperCase());
   if (scenes && provider !== "chatgpt" && provider !== "api_key") detail += " Screen recordings have no click details — connect ChatGPT to describe these steps automatically, or type each one.";

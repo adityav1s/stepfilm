@@ -157,6 +157,15 @@
       const value = clean(candidate);
       if (value) return value.split(" ").length > 10 ? `${value.split(" ").slice(0, 10).join(" ")}…` : value;
     }
+    // Unlabelled toggles followed by plain text ("[ ] checkbox 1").
+    if (["checkbox", "radio"].includes((element.type || "").toLowerCase())) {
+      let node = element.nextSibling, text = "";
+      while (node && !text && node.nodeName !== "BR" && !(node instanceof Element && node.matches("input,select,textarea,button"))) {
+        text = clean(node.textContent, 60);
+        node = node.nextSibling;
+      }
+      if (text && text.split(" ").length <= 8) return text;
+    }
     // Unlabelled checkboxes/toggles in lists (e.g. a to-do item): use the row's text.
     if (["checkbox", "radio"].includes((element.type || "").toLowerCase()) || ["checkbox", "switch"].includes(element.getAttribute("role"))) {
       const row = element.closest("li,tr,[role=row],[role=listitem],[role=option]");

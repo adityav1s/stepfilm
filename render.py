@@ -124,6 +124,10 @@ def speech_text(text):
     return text
 
 
+
+# Keep narration peaks ~1.5 dB under full scale so loud words never clip.
+NARRATION_LIMITER = "alimiter=limit=0.84:level=false"
+
 class GuideParser(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -521,7 +525,7 @@ class Renderer:
             video_args += ["-filter_complex", overlay_graph, "-map", "[vout]", "-map", "1:a:0"]
         else:
             video_args += ["-map", "0:v:0", "-map", "1:a:0", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x101827,setsar=1"]
-        video_args += ["-af", "adelay=180:all=1,apad", "-t", str(scene_duration), "-r", str(guide_motion.FPS),
+        video_args += ["-af", f"adelay=180:all=1,{NARRATION_LIMITER},apad", "-t", str(scene_duration), "-r", str(guide_motion.FPS),
                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
                        "-c:a", "aac", "-ac", "1", "-ar", "44100", str(folder / name)]
         self.ff(folder, *video_args)
@@ -537,7 +541,7 @@ class Renderer:
         else:
             command += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono"]
         delay = int(round(audio_lead * 1000))
-        command += ["-map", "0:v:0", "-map", "1:a:0", "-af", f"adelay={delay}:all=1,apad" if audio else "anull",
+        command += ["-map", "0:v:0", "-map", "1:a:0", "-af", f"adelay={delay}:all=1,{NARRATION_LIMITER},apad" if audio else "anull",
                     "-t", f"{duration:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                     "-pix_fmt", "yuv420p", "-r", str(guide_motion.FPS), "-g", str(guide_motion.FPS * 2),
                     "-c:a", "aac", "-b:a", "160k", "-ac", "1", "-ar", "44100", str(output)]

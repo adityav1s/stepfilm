@@ -221,9 +221,18 @@ def apply_pre_action_frames(steps, ffmpeg, video_path, lead=0.03):
         if ffmpeg and video_path and action.get("type") in PRE_ACTION_TYPES and isinstance(step.get("at"), (int, float)):
             viewport = action.pop("viewport", None)
             aspect = viewport["w"] / viewport["h"] if isinstance(viewport, dict) and viewport.get("h") else None
-            # A scroll right at the click: wait for the scrolled frame instead.
-            when = step["at"] + 0.08 if action.pop("recentScroll", False) else step["at"] - lead
-            frame = frame_before(ffmpeg, video_path, when, aspect)
+            if action.pop("recentScroll", False):
+                # The page was scrolling at the click (often a smooth scroll
+                # bringing the target into view), so recording frames around
+                # it may be mid-animation. Prefer the extension's screenshot,
+                # where the target was re-measured; with no such measurement
+                # (the page had already changed), show no highlight rather
+                # than a wrong one.
+                if not isinstance(shot_rect, dict):
+                    action["stale"] = True
+                    continue
+            else:
+                frame = frame_before(ffmpeg, video_path, step["at"] - lead, aspect)
         if frame:
             step["image"] = frame
             action.pop("stale", None)
