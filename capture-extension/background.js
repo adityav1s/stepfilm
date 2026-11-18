@@ -28,7 +28,9 @@ let lastNavigateUrl = "";
 let lastActionAt = 0;
 function enqueue(tab, action) {
   if (!state.active || state.captureMode !== "tab" || tab.id !== state.captureTabId) return;
-  if (action?.type === "navigate") {
+  if (action?.type === "back") {
+    lastNavigateUrl = action.url || lastNavigateUrl;
+  } else if (action?.type === "navigate") {
     // A click that loads a new page is already a step; only record
     // navigations that did not come from a recorded action.
     if (action.url === lastNavigateUrl || Date.now() - lastActionAt < 2500) { lastNavigateUrl = action.url || lastNavigateUrl; return; }
@@ -60,6 +62,7 @@ async function drain() {
         ]);
         // The server prefers a frame from the tab video taken just before the
         // action (matching action.rect); without video it uses shotRect.
+        if (where?.lastScrollAt && Math.abs(where.lastScrollAt - capturedAt) < 400) action.recentScroll = true;
         if (where?.found && where.rect) action.shotRect = where.rect;
         else if (action.type !== "navigate") action.stale = true;
         delete action.ref;

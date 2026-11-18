@@ -195,7 +195,9 @@ def frame_before(ffmpeg: str, video_path: str, time: float, aspect=None) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii") if jpeg.startswith(b"\xff\xd8\xff") else ""
 
 
-PRE_ACTION_TYPES = {"click", "submit", "select", "upload"}
+# A select's screenshot is taken after the change and shows the chosen
+# value, which is what the step is about, so it keeps its screenshot.
+PRE_ACTION_TYPES = {"click", "submit", "upload"}
 
 
 def apply_pre_action_frames(steps, ffmpeg, video_path, lead=0.03):
@@ -214,11 +216,14 @@ def apply_pre_action_frames(steps, ffmpeg, video_path, lead=0.03):
         shot_rect = action.pop("shotRect", None)
         if not (ffmpeg and video_path):
             action.pop("viewport", None)
+            action.pop("recentScroll", None)
         frame = ""
         if ffmpeg and video_path and action.get("type") in PRE_ACTION_TYPES and isinstance(step.get("at"), (int, float)):
             viewport = action.pop("viewport", None)
             aspect = viewport["w"] / viewport["h"] if isinstance(viewport, dict) and viewport.get("h") else None
-            frame = frame_before(ffmpeg, video_path, step["at"] - lead, aspect)
+            # A scroll right at the click: wait for the scrolled frame instead.
+            when = step["at"] + 0.08 if action.pop("recentScroll", False) else step["at"] - lead
+            frame = frame_before(ffmpeg, video_path, when, aspect)
         if frame:
             step["image"] = frame
             action.pop("stale", None)

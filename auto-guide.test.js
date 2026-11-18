@@ -87,4 +87,9 @@ const todos = mergeSteps([
   { text: "", action: { type: "submit", role: "textbox", name: "New todo", url: "u" } },
 ]);
 assert.deepEqual(todos.map((step) => stepCopy(step.action).text), ["Type “Buy milk” in “New todo” and press Enter", "Type “Walk dog” in “New todo” and press Enter"], "two entries in the same field stay two steps");
+const secret = build({ title: "Sign in", steps: [{ image, text: "", action: { type: "click", role: "button", name: "Sign in", rect: { x: .4, y: .6, width: .1, height: .05 }, sensitive: [{ x: .3, y: .4, width: .3, height: .05 }], url: "https://a.test/login", pageTitle: "Sign in - A" } }] });
+assert.ok(secret.steps[0].annotations.some((a) => a.type === "blur" && a.origin === "action" && a.y === .4), "password/card fields on screen are blurred automatically");
+assert.equal(build(secret).steps[0].annotations.filter((a) => a.type === "blur").length, 1, "redactions are not duplicated on rebuild");
+assert.ok(normalizeGuide(secret).steps[0].action.sensitive.length === 1);
+assert.equal(stepCopy({ type: "back", pageTitle: "The Internet" }).text, "Go back to the The Internet page".replace("the The", "the The"));
 console.log("auto-guide: ok");

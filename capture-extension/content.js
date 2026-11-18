@@ -50,11 +50,36 @@
     const type = (field.type || "text").toLowerCase();
     if (!["text", "search", "url", ""].includes(type) && field.tagName === "INPUT") return "";
     const hints = [field.name, field.id, field.getAttribute("autocomplete"), field.getAttribute("aria-label"), field.getAttribute("placeholder"), labelFor(field)].join(" ");
-    if (SENSITIVE.test(hints) || /^(cc-|current-password|new-password|one-time-code|tel|email|bday|street-address|postal-code)/.test(field.getAttribute("autocomplete") || "")) return "";
+    if (isSensitiveField(field) || SENSITIVE.test(hints) || /^(cc-|current-password|new-password|one-time-code|tel|email|bday|street-address|postal-code)/.test(field.getAttribute("autocomplete") || "")) return "";
     const value = String(field.value || "").trim();
     if (!value || value.length > 40 || /\n/.test(value)) return "";
     const cleaned = clean(value, 40);
     return cleaned.includes("…") ? "" : cleaned;
+  }
+
+  // Fields whose contents must never appear in a guide. Their on-screen
+  // boxes travel with each step so the editor blurs them automatically.
+  function isSensitiveField(field) {
+    if (!(field instanceof Element) || !["INPUT", "TEXTAREA", "SELECT"].includes(field.tagName)) return false;
+    const type = (field.type || "").toLowerCase();
+    if (type === "password") return true;
+    const auto = (field.getAttribute("autocomplete") || "").toLowerCase();
+    if (/(^|\s)(cc-|current-password|new-password|one-time-code|transaction-|bday)/.test(auto)) return true;
+    const hints = [field.name, field.id, field.getAttribute("aria-label"), field.getAttribute("placeholder"), labelFor(field)].join(" ");
+    return SENSITIVE.test(hints);
+  }
+  function sensitiveBoxes() {
+    const width = window.innerWidth || 1, height = window.innerHeight || 1;
+    const boxes = [];
+    for (const field of document.querySelectorAll("input,textarea,select")) {
+      if (boxes.length >= 12 || !isSensitiveField(field)) continue;
+      const rect = field.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2 || rect.bottom < 0 || rect.right < 0 || rect.top > height || rect.left > width) continue;
+      const pad = 4;
+      const x = Math.max(0, rect.left - pad), y = Math.max(0, rect.top - pad);
+      boxes.push({ x: x / width, y: y / height, width: Math.min(width - x, rect.width + pad * 2) / width, height: Math.min(height - y, rect.height + pad * 2) / height });
+    }
+    return boxes;
   }
 
   // Elements behind recent actions, so the background can re-measure them
@@ -67,15 +92,20 @@
     if (refs.size > 40) refs.delete(refs.keys().next().value);
     return ref;
   }
+  // When the page scrolled right around a click (e.g. the target was
+  // scrolled into view), the recording's frame from just before the click
+  // can predate the scroll; the server then takes a slightly later frame.
+  let lastScrollAt = 0;
+  window.addEventListener("scroll", () => { lastScrollAt = Date.now(); }, { capture: true, passive: true });
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "stepfilm-locate") return;
     const element = refs.get(message.ref);
-    if (!element || !element.isConnected) { sendResponse({ found: false }); return; }
+    if (!element || !element.isConnected) { sendResponse({ found: false, lastScrollAt }); return; }
     const rect = targetRect(element);
     const width = window.innerWidth || 1, height = window.innerHeight || 1;
     const box = (value, size) => Math.max(0, Math.min(1, value / size));
     const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width;
-    sendResponse({ found: visible, rect: { x: box(rect.left, width), y: box(rect.top, height), width: box(rect.width, width), height: box(rect.height, height) } });
+    sendResponse({ lastScrollAt, found: visible, rect: { x: box(rect.left, width), y: box(rect.top, height), width: box(rect.width, width), height: box(rect.height, height) } });
   });
 
   // The outermost editable element for inputs, textareas and rich editors.
@@ -198,6 +228,9 @@
       ref: remember(element),
       viewport: { w: width, h: height },
     };
+    const sensitive = sensitiveBoxes();
+    if (sensitive.length) action.sensitive = sensitive;
+    if (lastScrollAt && Date.now() - lastScrollAt < 400) action.recentScroll = true;
     if (event && Number.isFinite(event.clientX) && (event.clientX || event.clientY)) action.point = { x: box(event.clientX, width), y: box(event.clientY, height) };
     if (role === "checkbox" || role === "switch" || role === "radio" || role === "menuitemcheckbox") action.checked = element.checked === true || element.getAttribute("aria-checked") === "true";
     if (element.tagName === "SELECT") action.value = clean(element.selectedOptions?.[0]?.innerText, 60);
@@ -287,5 +320,11 @@
     notify("page-action", describe(field, "submit"));
   }, true);
 
-  notify("page-ready", { type: "navigate", url: safeUrl(), pageTitle: safeTitle() });
+  // Back/forward is a deliberate user step (the toolbar arrow), not a page
+  // load caused by a click, so it is always recorded.
+  const navigationType = performance.getEntriesByType?.("navigation")?.[0]?.type;
+  const pageAction = { type: navigationType === "back_forward" ? "back" : "navigate", url: safeUrl(), pageTitle: safeTitle(), ...(sensitiveBoxes().length ? { sensitive: sensitiveBoxes() } : {}) };
+  notify("page-ready", pageAction);
+  // Pages restored from the back/forward cache don't re-run scripts.
+  window.addEventListener("pageshow", (event) => { if (event.persisted) notify("page-ready", { type: "back", url: safeUrl(), pageTitle: safeTitle() }); });
 })();

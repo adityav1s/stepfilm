@@ -40,7 +40,7 @@
   // Recorded browser action behind a captured screenshot. Only plain,
   // bounded values are kept so saved projects stay small and inert.
   function normalizeAction(action) {
-    if (!action || typeof action !== "object" || !["click", "type", "select", "submit", "upload", "navigate", "scene"].includes(action.type)) return {};
+    if (!action || typeof action !== "object" || !["click", "type", "select", "submit", "upload", "navigate", "scene", "back"].includes(action.type)) return {};
     const clean = { type: action.type };
     for (const [key, limit] of [["role", 30], ["name", 120], ["pageTitle", 120], ["value", 60], ["tag", 20], ["region", 20], ["url", 500]]) if (typeof action[key] === "string" && action[key]) clean[key] = action[key].slice(0, limit);
     if (action.rect && typeof action.rect === "object") clean.rect = { x: clamp(action.rect.x), y: clamp(action.rect.y), width: clamp(action.rect.width), height: clamp(action.rect.height) };
@@ -49,6 +49,7 @@
     if (action.start === true) clean.start = true;
     if (action.stale === true) clean.stale = true;
     if (action.pressEnter === true) clean.pressEnter = true;
+    if (Array.isArray(action.sensitive)) clean.sensitive = action.sensitive.slice(0, 12).filter((box) => box && typeof box === "object").map((box) => ({ x: clamp(box.x), y: clamp(box.y), width: clamp(box.width), height: clamp(box.height) }));
     return { action: clean };
   }
   function normalizeGuide(input) {
@@ -68,7 +69,7 @@
       stepIds.add(value);
       return value;
     };
-    return { schemaVersion: 2, title: String(input.title || "Untitled guide").slice(0, 150), voice: typeof input.voice === "string" ? input.voice.slice(0, 80) : "", intro: String(input.intro || "").slice(0, 300), outro: String(input.outro || "").slice(0, 300), aiTitle: input.aiTitle === true, autoTitle: input.autoTitle === true, titleEdited: input.titleEdited === true, brand, transcript: String(input.transcript || "").slice(0, 100000), transcriptSegments: Array.isArray(input.transcriptSegments) ? input.transcriptSegments.filter((segment) => segment && Number.isFinite(Number(segment.start)) && Number.isFinite(Number(segment.end))).map((segment) => ({ start: Number(segment.start), end: Number(segment.end), text: String(segment.text || "").slice(0, 500), stepIndex: Math.max(0, Number(segment.stepIndex) || 0) })) : [], narrationAudioId, narrationAudioUrl: narrationAudioId ? `/api/narration/${narrationAudioId}` : "", captureDuration: Math.max(0, Number(input.captureDuration) || 0),
+    return { schemaVersion: 2, title: String(input.title || "Untitled guide").slice(0, 150), voice: typeof input.voice === "string" ? input.voice.slice(0, 80) : "", captureId: /^[a-f0-9]{32}$/.test(input.captureId || "") ? input.captureId : "", intro: String(input.intro || "").slice(0, 300), outro: String(input.outro || "").slice(0, 300), aiTitle: input.aiTitle === true, autoTitle: input.autoTitle === true, titleEdited: input.titleEdited === true, brand, transcript: String(input.transcript || "").slice(0, 100000), transcriptSegments: Array.isArray(input.transcriptSegments) ? input.transcriptSegments.filter((segment) => segment && Number.isFinite(Number(segment.start)) && Number.isFinite(Number(segment.end))).map((segment) => ({ start: Number(segment.start), end: Number(segment.end), text: String(segment.text || "").slice(0, 500), stepIndex: Math.max(0, Number(segment.stepIndex) || 0) })) : [], narrationAudioId, narrationAudioUrl: narrationAudioId ? `/api/narration/${narrationAudioId}` : "", captureDuration: Math.max(0, Number(input.captureDuration) || 0),
       capturedClips: Array.isArray(input.capturedClips) ? input.capturedClips.filter((clip) => clip && /^[a-f0-9]{32}$/.test(clip.id)).map((clip) => ({ id: clip.id, url: `/api/media/${clip.id}`, label: String(clip.label || "Captured tab video").slice(0, 100) })) : [],
       steps: input.steps.map((step) => {
       const stepId = normalizedStepId(step.id);

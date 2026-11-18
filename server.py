@@ -34,7 +34,7 @@ VIDEO_ANALYSIS_MAX_IMAGE_BYTES = 6 * 1024 * 1024
 EXPORT_LOCK = Lock()
 
 
-ACTION_TYPES = {"click", "type", "select", "submit", "upload", "navigate", "scene"}
+ACTION_TYPES = {"click", "type", "select", "submit", "upload", "navigate", "scene", "back"}
 ACTION_ROLES = {"link", "button", "select", "textbox", "checkbox", "radio", "switch", "slider", "file", "heading", "image", "element",
                 "tab", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "combobox", "treeitem", "listbox", "searchbox", "gridcell", "row", "cell"}
 
@@ -79,6 +79,18 @@ def sanitize_action(action):
         clean["stale"] = True
     if action.get("pressEnter") is True:
         clean["pressEnter"] = True
+    if action.get("recentScroll") is True:
+        clean["recentScroll"] = True
+    sensitive = action.get("sensitive")
+    if isinstance(sensitive, list):
+        boxes = []
+        for box in sensitive[:12]:
+            if isinstance(box, dict):
+                values = [unit(box.get(key)) for key in ("x", "y", "width", "height")]
+                if None not in values and values[2] > 0 and values[3] > 0:
+                    boxes.append(dict(zip(("x", "y", "width", "height"), values)))
+        if boxes:
+            clean["sensitive"] = boxes
     viewport = action.get("viewport")
     if isinstance(viewport, dict) and all(isinstance(viewport.get(k), (int, float)) and 50 <= viewport[k] <= 10000 for k in ("w", "h")):
         clean["viewport"] = {"w": float(viewport["w"]), "h": float(viewport["h"])}
@@ -1204,7 +1216,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Capture a screenshot or finish a tab video before stopping.")
                 clips = ([{"id": self.server.capture_id, "url": f"/api/media/{self.server.capture_id}", "label": "Continuous tab recording"}]
                          if self.server.capture_clip_ready else [])
-                self.server.capture_latest = {"title": self.server.capture_title, "steps": self.server.capture_steps, "capturedClips": clips,
+                self.server.capture_latest = {"captureId": self.server.capture_id, "title": self.server.capture_title, "steps": self.server.capture_steps, "capturedClips": clips,
                                               "captureMode": self.server.capture_mode,
                                               "narrationAudioId": self.server.capture_id if (self.server.capture_media_dir / f"{self.server.capture_id}.narration.webm").is_file() else "",
                                               "narrationAudioUrl": f"/api/narration/{self.server.capture_id}" if (self.server.capture_media_dir / f"{self.server.capture_id}.narration.webm").is_file() else "",

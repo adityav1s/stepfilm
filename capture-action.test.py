@@ -22,3 +22,6 @@ assert private["url"] == "https://example.com/search", "query strings and fragme
 assert "jane.doe" not in private["pageTitle"] and "555" not in private["name"], private
 assert describe_recorded_action(None) == ""
 print("capture action metadata: ok")
+boxes = sanitize_action({"type": "click", "sensitive": [{"x": 0.3, "y": 0.4, "width": 0.3, "height": 0.05}, {"x": "bad"}, {"x": 0.1, "y": 0.1, "width": 0, "height": 0.1}] + [{"x": 0, "y": 0, "width": 0.1, "height": 0.1}] * 20})["sensitive"]
+assert boxes[0] == {"x": 0.3, "y": 0.4, "width": 0.3, "height": 0.05} and len(boxes) <= 12, "sensitive-field boxes are validated and bounded"
+print("sensitive field redaction metadata: ok")
