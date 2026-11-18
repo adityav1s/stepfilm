@@ -44,7 +44,6 @@ with tempfile.TemporaryDirectory() as temp:
                                 "captureStart": 0.2, "captions": [{"start": 0.3, "end": 1.5, "text": "Open Billing"}]}], folder)
     captioned_metadata = json.loads(subprocess.check_output([ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(captioned)], text=True, timeout=30))
     assert any(stream["codec_type"] == "video" and stream["codec_name"] == "h264" for stream in captioned_metadata["streams"]), captioned_metadata
-    assert (folder / "caption-000.png").is_file(), "caption overlay image was not generated"
     captioned_copy = folder / "captioned-only.mp4"
     shutil.copyfile(captioned, captioned_copy)
     def lower_frame(path):
@@ -61,7 +60,6 @@ with tempfile.TemporaryDirectory() as temp:
                              {"theme": "bold", "accent": "#ff3366", "titleStyle": "display", "title": "Billing guide"})
     branded_metadata = json.loads(subprocess.check_output([ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(branded)], text=True, timeout=30))
     assert any(stream["codec_type"] == "video" and stream["codec_name"] == "h264" for stream in branded_metadata["streams"]), branded_metadata
-    assert (folder / "brand-000.png").is_file() and (folder / "caption-006.png").is_file(), "brand and caption overlays must both be built"
     def top_frame(path):
         return subprocess.check_output([ffmpeg, "-hide_banner", "-loglevel", "error", "-ss", "0.6", "-i", str(path), "-frames:v", "1", "-vf", "crop=1200:170:40:0", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], timeout=30)
     assert top_frame(branded) != top_frame(captioned_copy), "brand treatment was not burned into the MP4"
@@ -94,7 +92,7 @@ with tempfile.TemporaryDirectory() as temp:
     except RuntimeError as error:
         assert "retired-tts-model" in str(error) and "local speech" in str(error), str(error)
     local_speech_calls = []
-    def mocked_local_speech(target_folder, text, output):
+    def mocked_local_speech(target_folder, text, output, **_options):
         local_speech_calls.append(text)
         subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=520:duration=1.3", output], cwd=target_folder, check=True, capture_output=True, timeout=30)
     original_speech = renderer.speech

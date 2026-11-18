@@ -1,5 +1,10 @@
 import base64
 import binascii
+import hashlib
+import os
+import threading
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from html.parser import HTMLParser
 from pathlib import Path
@@ -10,6 +15,69 @@ import sys
 import tempfile
 
 from caption_timeline import build_export_caption_tracks
+import guide_motion
+
+
+# --------------------------------------------------------------------------
+# macOS voices
+
+NOVELTY_VOICES = {"albert", "bad news", "bahh", "bells", "boing", "bubbles", "cellos", "wobble", "good news",
+                  "jester", "organ", "superstar", "trinoids", "whisper", "zarvox", "fred", "junior", "ralph",
+                  "kathy", "deranged", "hysterical", "pipe organ", "princess", "bruce", "agnes", "vicki", "victoria"}
+# Natural-sounding classic voices, best first, used when no Premium/Enhanced voice is installed.
+PREFERRED_VOICES = ["ava", "zoe", "allison", "evan", "nathan", "susan", "tom", "samantha", "alex", "serena",
+                    "daniel", "kate", "karen", "moira", "tessa", "rishi"]
+VOICE_RATES = {"slower": 160, "natural": 182, "brisk": 205}
+
+
+def parse_say_voices(listing):
+    """Parse `say -v '?'` output into [{name, locale, quality}]."""
+    voices = []
+    for line in str(listing or "").splitlines():
+        match = re.match(r"^(.*?)\s+([a-z]{2,3}_[A-Za-z0-9]+)\s+#", line)
+        if not match:
+            continue
+        name, locale = match.group(1).strip(), match.group(2)
+        quality = "premium" if "(Premium)" in name else "enhanced" if "(Enhanced)" in name else "standard"
+        voices.append({"name": name, "locale": locale, "quality": quality})
+    return voices
+
+
+def voice_rank(voice):
+    """Lower is better. Premium/Enhanced en_US first, then natural classics (Samantha), never novelty voices."""
+    name = voice["name"]
+    base = re.sub(r"\s*\(.*\)\s*$", "", name).strip().lower()
+    if not voice["locale"].startswith("en_") or base in NOVELTY_VOICES:
+        return None
+    if base in {"eddy", "flo", "grandma", "grandpa", "reed", "rocko", "sandy", "shelley"}:
+        quality_rank = 6  # Eloquence voices: intelligible but robotic
+    else:
+        quality_rank = {"premium": 0, "enhanced": 1}.get(voice["quality"], 3)
+    locale_rank = 0 if voice["locale"] == "en_US" else 1 if voice["locale"] in {"en_GB", "en_AU", "en_IE", "en_CA"} else 2
+    preferred = PREFERRED_VOICES.index(base) if base in PREFERRED_VOICES else len(PREFERRED_VOICES)
+    return (quality_rank, locale_rank, preferred, name)
+
+
+def narration_voices(voices):
+    ranked = [(voice_rank(voice), voice) for voice in voices]
+    return [voice for rank, voice in sorted((item for item in ranked if item[0] is not None), key=lambda item: item[0])]
+
+
+def best_voice(voices, override=None):
+    names = {voice["name"] for voice in voices}
+    if override and override in names:
+        return override
+    ranked = narration_voices(voices)
+    return ranked[0]["name"] if ranked else None
+
+
+def speech_text(text):
+    """Small clean-ups so local TTS reads UI copy naturally."""
+    text = str(text or "").strip()
+    text = re.sub(r"[\"“”«»]", "", text)
+    text = text.replace("→", ", then ").replace(" & ", " and ").replace("…", ".")
+    text = re.sub(r"\s+[—–]\s+", ", ", text)
+    return text
 
 
 class GuideParser(HTMLParser):
@@ -113,6 +181,10 @@ class Renderer:
         if not self.ffmpeg or not self.ffprobe:
             raise ValueError("Install FFmpeg and make sure ffmpeg and ffprobe are on your PATH.")
         self.model = model
+        self.voices = []
+        self.voice = None
+        self._preview_cache = OrderedDict()
+        self._preview_lock = threading.Lock()
         self.piper = shutil.which("piper") if model else None
         if model:
             if not self.piper or not model.is_file() or not Path(f"{model}.json").is_file():
@@ -120,6 +192,12 @@ class Renderer:
             self.engine = "Piper"
         elif sys.platform == "darwin" and shutil.which("say"):
             self.engine = "macOS speech"
+            try:
+                listing = subprocess.check_output(["say", "-v", "?"], text=True, timeout=15)
+            except (subprocess.SubprocessError, OSError):
+                listing = ""
+            self.voices = parse_say_voices(listing)
+            self.voice = best_voice(self.voices, os.environ.get("STEPFILM_VOICE", "").strip() or None)
         else:
             filters = subprocess.check_output([self.ffmpeg, "-hide_banner", "-filters"], text=True, timeout=15)
             if not re.search(r"\bflite\s", filters):
@@ -244,22 +322,43 @@ class Renderer:
         filters[-1] = filters[-1].replace(previous, "[vout]")
         return inputs, ";".join(filters)
 
-    def speech(self, folder, text, output):
-        if not text.strip():
-            self.ff(folder, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "1.8", output)
+    @property
+    def voice_label(self):
+        return f"{self.engine} ({self.voice})" if self.voice else self.engine
+
+    def voice_list(self):
+        """Narration-quality voices, best first (macOS only)."""
+        return [{**voice, "default": voice["name"] == self.voice} for voice in narration_voices(self.voices)]
+
+    def resolve_voice(self, voice=None):
+        if voice in (None, ""):
+            return self.voice
+        if not isinstance(voice, str) or voice not in {item["name"] for item in self.voices}:
+            raise ValueError("That voice is not installed on this Mac. Choose one from the voice list.")
+        return voice
+
+    def speech(self, folder, text, output, pace="natural", voice=None):
+        folder = Path(folder)
+        text = speech_text(text)
+        if not text:
+            self.ff(folder, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "0.6", output)
             return
-        (folder / "line.txt").write_text(text, encoding="utf-8")
+        line = folder / f"{Path(output).stem}.txt"
+        line.write_text(text, encoding="utf-8")
         if self.piper:
             subprocess.run([self.piper, "--model", str(self.model), "--output_file", output],
                            cwd=folder, input=text, text=True, check=True, capture_output=True, timeout=90)
         elif self.engine == "macOS speech":
-            subprocess.run(["say", "-f", "line.txt", "-o", "line.aiff"], cwd=folder,
-                           check=True, capture_output=True, timeout=60)
-            self.ff(folder, "-i", "line.aiff", output)
+            command = ["say", "-f", line.name, "-o", output, "--file-format=WAVE", "--data-format=LEI16@44100",
+                       "-r", str(VOICE_RATES.get(pace, VOICE_RATES["natural"]))]
+            chosen = self.resolve_voice(voice)
+            if chosen:
+                command[1:1] = ["-v", chosen]
+            subprocess.run(command, cwd=folder, check=True, capture_output=True, timeout=90)
         else:
-            self.ff(folder, "-f", "lavfi", "-i", "flite=textfile=line.txt:voice=slt", output)
+            self.ff(folder, "-f", "lavfi", "-i", f"flite=textfile={line.name}:voice=slt", output)
 
-    def step_audio(self, folder, step):
+    def step_audio(self, folder, step, voice=None):
         voiceover = step.get("voiceover", "")
         audio_source = step.get("audioSource") or ("synthetic" if isinstance(voiceover, str) and voiceover.startswith("data:audio/mpeg;base64,") else "local")
         if audio_source == "recorded":
@@ -281,86 +380,240 @@ class Renderer:
             if len(data) > 10 * 1024 * 1024: raise ValueError("An AI voiceover is too large to export.")
             (folder / "scene.mp3").write_bytes(data)
             return "scene.mp3"
-        self.speech(folder, step["text"], "scene.wav")
+        options = {}
+        if step.get("voicePace") in {"slower", "brisk"}:
+            options["pace"] = step["voicePace"]
+        if voice:
+            options["voice"] = voice
+        self.speech(folder, step["text"], "scene.wav", **options)
         return "scene.wav"
 
-    def preview(self, text):
+    def preview(self, text, voice=None, pace="natural"):
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 400:
             raise ValueError("Enter a narration line of 1–400 characters.")
+        voice = self.resolve_voice(voice)
+        pace = pace if pace in VOICE_RATES else "natural"
+        key = hashlib.sha256(f"{voice}\0{pace}\0{text.strip()}".encode()).hexdigest()
+        with self._preview_lock:
+            if key in self._preview_cache:
+                self._preview_cache.move_to_end(key)
+                return self._preview_cache[key]
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
-            self.speech(folder, text, "preview.wav")
-            return (folder / "preview.wav").read_bytes()
+            self.speech(folder, text, "preview.wav", pace=pace, voice=voice)
+            audio = (folder / "preview.wav").read_bytes()
+        with self._preview_lock:
+            self._preview_cache[key] = audio
+            while len(self._preview_cache) > 96:
+                self._preview_cache.popitem(last=False)
+        return audio
 
-    def video(self, steps, folder, brand=None):
-        validate_steps(steps)
-        segments = []
-        rendered_audio_durations = []
-        rendered_scene_durations = []
-        for index, step in enumerate(steps):
-            if step.get("kind") == "video":
-                source = Path(step["media_path"])
-                scene_audio = self.step_audio(folder, step)
-                video_duration_text = subprocess.check_output([
-                    self.ffprobe, "-v", "error", "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1", str(source)
-                ], text=True, timeout=15).strip()
-                audio_duration_text = subprocess.check_output([
-                    self.ffprobe, "-v", "error", "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1", scene_audio
-                ], cwd=folder, text=True, timeout=15).strip()
-                try:
-                    source_duration = float(video_duration_text)
-                    audio_duration = float(audio_duration_text)
-                    duration = max(source_duration, audio_duration)
-                except ValueError as error:
-                    raise RuntimeError("The captured video or its narration has no readable duration.") from error
-                name = f"scene-{index:02}.mp4"
-                scene_duration = max(2.0, duration + 0.55)
-                overlay_inputs, overlay_graph = self.caption_overlay_inputs(folder, step, scene_duration, brand, index == 0, audio_duration)
-                video_args = ["-stream_loop", "-1", "-i", str(source), "-i", scene_audio, *overlay_inputs]
-                if overlay_graph:
-                    video_args += ["-filter_complex", overlay_graph, "-map", "[vout]", "-map", "1:a:0"]
-                else:
-                    video_args += ["-map", "0:v:0", "-map", "1:a:0", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x101827,setsar=1"]
-                video_args += ["-af", "adelay=180:all=1,apad", "-t", str(scene_duration),
-                               "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-                               "-c:a", "aac", "-ac", "1", "-ar", "44100", name]
-                self.ff(folder, *video_args)
-                rendered_audio_durations.append(audio_duration)
-                rendered_scene_durations.append(self._duration(folder / name))
-                segments.append(f"file '{name}'")
-                continue
-            kind, screenshot = image_bytes(step["image"])
-            image = f"scene.{kind}"
-            (folder / image).write_bytes(screenshot)
-            scene_audio = self.step_audio(folder, step)
-            duration_text = subprocess.check_output([
-                self.ffprobe, "-v", "error", "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1", scene_audio
-            ], cwd=folder, text=True, timeout=15).strip()
+    def audio_duration(self, folder, audio):
+        text = subprocess.check_output([
+            self.ffprobe, "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(audio)
+        ], cwd=folder, text=True, timeout=15).strip()
+        try:
+            return max(0.0, float(text))
+        except ValueError as error:
+            raise RuntimeError("Local speech produced no audio. Check macOS speech permissions or use blank narration for a silent scene.") from error
+
+    def video_step_segment(self, folder, step, brand, is_first, name, voice=None):
+        """Captured clip step: the clip plays as recorded, with its narration and burned captions."""
+        source = Path(step["media_path"])
+        scene_audio = self.step_audio(folder, step, voice)
+        try:
+            source_duration = self.audio_duration(folder, source)
+            audio_duration = self.audio_duration(folder, scene_audio)
+        except RuntimeError as error:
+            raise RuntimeError("The captured video or its narration has no readable duration.") from error
+        duration = max(source_duration, audio_duration)
+        scene_duration = max(2.0, duration + 0.55)
+        overlay_inputs, overlay_graph = self.caption_overlay_inputs(folder, step, scene_duration, brand, is_first, audio_duration)
+        video_args = ["-stream_loop", "-1", "-i", str(source), "-i", scene_audio, *overlay_inputs]
+        if overlay_graph:
+            video_args += ["-filter_complex", overlay_graph, "-map", "[vout]", "-map", "1:a:0"]
+        else:
+            video_args += ["-map", "0:v:0", "-map", "1:a:0", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x101827,setsar=1"]
+        video_args += ["-af", "adelay=180:all=1,apad", "-t", str(scene_duration), "-r", str(guide_motion.FPS),
+                       "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+                       "-c:a", "aac", "-ac", "1", "-ar", "44100", str(folder / name)]
+        self.ff(folder, *video_args)
+        return audio_duration, 0.18
+
+    def encode_frames(self, folder, scene, duration, audio, audio_lead, output):
+        """Pipe Pillow frames to x264 and mux the narration, delayed by audio_lead."""
+        command = [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                   "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{guide_motion.WIDTH}x{guide_motion.HEIGHT}",
+                   "-r", str(guide_motion.FPS), "-i", "pipe:0"]
+        if audio:
+            command += ["-i", str(audio)]
+        else:
+            command += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono"]
+        delay = int(round(audio_lead * 1000))
+        command += ["-map", "0:v:0", "-map", "1:a:0", "-af", f"adelay={delay}:all=1,apad" if audio else "anull",
+                    "-t", f"{duration:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                    "-pix_fmt", "yuv420p", "-r", str(guide_motion.FPS), "-g", str(guide_motion.FPS * 2),
+                    "-c:a", "aac", "-b:a", "160k", "-ac", "1", "-ar", "44100", str(output)]
+        with open(folder / f"{Path(output).stem}.log", "wb") as log:
+            process = subprocess.Popen(command, cwd=folder, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log)
             try:
-                duration = float(duration_text)
-            except ValueError as error:
-                raise RuntimeError("Local speech produced no audio. Check macOS speech permissions or use blank narration for a silent scene.") from error
+                for t in guide_motion.frame_times(duration):
+                    process.stdin.write(scene.frame(t).tobytes())
+                process.stdin.close()
+                code = process.wait(timeout=180)
+            except BaseException:
+                process.kill()
+                process.wait()
+                raise
+        if code != 0:
+            raise subprocess.CalledProcessError(code, command)
+
+    def step_cues(self, step, audio_duration, audio_lead):
+        """Burned-in caption cues for a screenshot scene."""
+        captions = step.get("captions") or []
+        language = step.get("captionLanguage")
+        if captions:
+            base = max(0.0, float(step.get("captureStart", 0) or 0))
+            capture_end = max(base, float(step.get("captureEnd", base) or base))
+            span = capture_end - base
+            scale = audio_duration / span if span > 0 and audio_duration > 0 else 1.0
+            cues = []
+            for caption in captions:
+                if not isinstance(caption, dict):
+                    continue
+                translations = caption.get("translations") if isinstance(caption.get("translations"), dict) else {}
+                text = str((translations.get(language) if language else "") or caption.get("text", "")).strip()
+                try:
+                    start = (float(caption.get("start", 0)) - base) * scale + audio_lead
+                    end = (float(caption.get("end", 0)) - base) * scale + audio_lead
+                except (TypeError, ValueError):
+                    continue
+                if text and end > start:
+                    cues.append({"start": max(0.0, start), "end": end, "text": text})
+            if cues:
+                return cues
+        return guide_motion.caption_chunks(step.get("text", ""), audio_duration)
+
+    def video(self, steps, folder, brand=None, intro="", outro="", voice=None):
+        """Render the Guidde-style MP4: intro card, animated steps, captured clips, outro card."""
+        from PIL import Image
+        import guide_frames
+
+        validate_steps(steps)
+        voice = self.resolve_voice(voice) if voice else None
+        folder = Path(folder)
+        brand = brand if isinstance(brand, dict) else {}
+        theme = guide_frames.Theme(brand)
+        title = str(brand.get("title", "") or "").strip()[:150]
+        intro = str(intro or "").strip()[:300]
+        outro = str(outro or "").strip()[:300]
+        screenshot_total = len(steps)
+
+        # Scene plan: ("intro"|"outro"|"step"|"clip", payload)
+        plan = []
+        if title or intro:
+            plan.append(("intro", None))
+        for index, step in enumerate(steps):
+            plan.append(("clip" if step.get("kind") == "video" else "step", index))
+        if outro:
+            plan.append(("outro", None))
+
+        def scene_folder(position):
+            path = folder / f"scene-{position:02}"
+            path.mkdir(exist_ok=True)
+            return path
+
+        # Phase 1: narration for every scene, in parallel (say is single-threaded and slow to start).
+        def make_audio(item):
+            position, (kind, index) = item
+            sub = scene_folder(position)
+            if kind == "clip":
+                return None
+            if kind in {"intro", "outro"}:
+                text = intro if kind == "intro" else outro
+                if not text:
+                    return None, 0.0
+                self.speech(sub, text, "card.wav", **({"voice": voice} if voice else {}))
+                return sub / "card.wav", self.audio_duration(sub, sub / "card.wav")
+            step = steps[index]
+            if not str(step.get("text", "")).strip() and step.get("audioSource") not in {"recorded", "synthetic"}:
+                return None, 0.0
+            audio = sub / self.step_audio(sub, step, voice)
+            duration = self.audio_duration(sub, audio)
             if duration <= 0:
                 raise RuntimeError("Local speech produced an empty audio track. Check macOS speech permissions or use blank narration for a silent scene.")
-            name = f"scene-{index:02}.mp4"
-            scene_duration = max(2.0, duration + 0.55)
-            overlay_inputs, overlay_graph = self.caption_overlay_inputs(folder, step, scene_duration, brand, index == 0, duration)
-            image_args = ["-f", "image2", "-pattern_type", "none", "-loop", "1", "-framerate", "24", "-i", image, "-i", scene_audio, *overlay_inputs]
-            if overlay_graph:
-                image_args += ["-filter_complex", overlay_graph, "-map", "[vout]", "-map", "1:a:0"]
+            return audio, duration
+
+        workers = max(2, min(4, (os.cpu_count() or 4) // 2))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            audio = list(pool.map(make_audio, enumerate(plan)))
+
+        # Phase 2: build scene drawers (cheap); chain cursor and crossfade frames.
+        scenes = []
+        prev_point = None
+        backdrop = None
+        first_image = last_image = None
+        for kind, index in plan:
+            if kind == "step":
+                _, data = image_bytes(steps[index]["image"])
+                with Image.open(BytesIO(data)) as opened:
+                    image = opened.convert("RGB")
+                first_image = first_image or image
+                last_image = image
+        for position, (kind, index) in enumerate(plan):
+            if kind == "clip":
+                scenes.append(None)
+                continue
+            path, voice_length = audio[position]
+            if kind in {"intro", "outro"}:
+                duration = guide_motion.card_duration(voice_length)
+                drawer = guide_frames.CardScene(kind, title, intro if kind == "intro" else outro, theme, duration,
+                                                first_image if kind == "intro" else last_image, screenshot_total)
+                scenes.append({"drawer": drawer, "duration": duration, "audio": path, "lead": 0.5, "voice": voice_length})
+                continue
+            step = steps[index]
+            _, data = image_bytes(step["image"])
+            with Image.open(BytesIO(data)) as opened:
+                image = opened.convert("RGB")
+            point = guide_motion.click_point(step)
+            has_target = point is not None or guide_motion.target_box(step) is not None
+            duration = guide_motion.scene_duration(voice_length, has_target)
+            lead = guide_motion.AUDIO_LEAD
+            cues = self.step_cues(step, voice_length, lead)
+            drawer = guide_frames.ScreenshotScene(image, step, index + 1, screenshot_total, theme, duration, cues, prev_point)
+            if point is not None:
+                prev_point = point
+            scenes.append({"drawer": drawer, "duration": duration, "audio": path, "lead": lead, "voice": voice_length})
+        for position, scene in enumerate(scenes):
+            if scene and position and scenes[position - 1]:
+                scene["drawer"].prev_frame = scenes[position - 1]["drawer"].last_frame()
+
+        # Phase 3: encode every scene in parallel.
+        def encode(position):
+            kind, index = plan[position]
+            sub = scene_folder(position)
+            name = f"scene-{position:02}.mp4"
+            if kind == "clip":
+                voice_length, lead = self.video_step_segment(sub, steps[index], brand, position == 0, name, voice)
             else:
-                image_args += ["-map", "0:v:0", "-map", "1:a:0", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x101827,setsar=1"]
-            image_args += ["-af", "adelay=180:all=1,apad", "-t", str(scene_duration),
-                           "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-                           "-c:a", "aac", "-ac", "1", "-ar", "44100", name]
-            self.ff(folder, *image_args)
-            rendered_audio_durations.append(duration)
-            rendered_scene_durations.append(self._duration(folder / name))
-            segments.append(f"file '{name}'")
-        self.last_export_caption_tracks = build_export_caption_tracks(steps, rendered_audio_durations, rendered_scene_durations)
+                scene = scenes[position]
+                self.encode_frames(sub, scene["drawer"], scene["duration"], scene["audio"], scene["lead"], sub / name)
+                voice_length, lead = scene["voice"], scene["lead"]
+            return sub / name, voice_length, lead
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(encode, range(len(plan))))
+
+        segments = [f"file '{path.relative_to(folder)}'" for path, _, _ in results]
+        caption_steps, audio_durations, scene_durations = [], [], []
+        for (kind, index), (path, voice_length, _) in zip(plan, results):
+            caption_steps.append(steps[index] if kind in {"step", "clip"} else {"id": kind, "captions": []})
+            audio_durations.append(voice_length)
+            scene_durations.append(self._duration(path))
+        self.last_export_caption_tracks = build_export_caption_tracks(caption_steps, audio_durations, scene_durations)
+        self.last_export_scenes = [{"kind": kind, "start": round(sum(scene_durations[:i]), 3), "duration": round(scene_durations[i], 3)}
+                                   for i, (kind, _) in enumerate(plan)]
         (folder / "segments.txt").write_text("\n".join(segments) + "\n", encoding="utf-8")
         self.ff(folder, "-f", "concat", "-safe", "1", "-i", "segments.txt",
                 "-c", "copy", "-movflags", "+faststart", "tutorial.mp4")

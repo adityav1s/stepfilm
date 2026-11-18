@@ -153,3 +153,46 @@ def detect_scene_steps(
                 "image": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
             })
     return results
+
+
+def frame_at(ffmpeg: str, video_path: str, time: float) -> str:
+    """Return one frame of the recording as a JPEG data URL, or "" on failure."""
+    try:
+        jpeg = _jpeg_at(ffmpeg, video_path, max(0.0, float(time)))
+    except RuntimeError:
+        return ""
+    return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii") if jpeg else ""
+
+
+PRE_ACTION_TYPES = {"click", "submit", "select", "upload"}
+
+
+def apply_pre_action_frames(steps, ffmpeg, video_path, lead=0.12):
+    """Use the tab recording to show each action's page just BEFORE it happened.
+
+    A screenshot taken after a click can already show the next page or a
+    closed dialog. The recording has the moment of the pointer press, which
+    matches the element box measured then. Without a usable frame, fall back
+    to the box re-measured on the screenshot (shotRect), or mark it stale.
+    """
+    replaced = 0
+    for step in steps:
+        action = step.get("action")
+        if not isinstance(action, dict):
+            continue
+        shot_rect = action.pop("shotRect", None)
+        frame = ""
+        if ffmpeg and video_path and action.get("type") in PRE_ACTION_TYPES and isinstance(step.get("at"), (int, float)):
+            frame = frame_at(ffmpeg, video_path, step["at"] - lead)
+        if frame:
+            step["image"] = frame
+            action.pop("stale", None)
+            replaced += 1
+        elif isinstance(shot_rect, dict) and isinstance(action.get("rect"), dict):
+            rect = action["rect"]
+            point = action.get("point")
+            if isinstance(point, dict):
+                action["point"] = {"x": min(1.0, max(0.0, point["x"] + shot_rect["x"] - rect["x"])),
+                                   "y": min(1.0, max(0.0, point["y"] + shot_rect["y"] - rect["y"]))}
+            action["rect"] = shot_rect
+    return replaced

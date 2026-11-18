@@ -24,6 +24,9 @@
     const title = quoteName(action?.pageTitle, 120);
     const parts = title.split(/\s+[-|·—–]\s+/).map((part) => part.trim()).filter(Boolean);
     if (parts.length > 1) return parts[parts.length - 1].slice(0, 40);
+    // "Wikipedia, the free encyclopedia" -> "Wikipedia"
+    const lead = title.split(",")[0].trim();
+    if (lead && lead.length <= 30 && lead.split(" ").length <= 4) return lead;
     return hostOf(action?.url) || title.slice(0, 40);
   }
 
@@ -76,7 +79,12 @@
       }
       case "type": {
         const search = role === "searchbox" || /search/i.test(name);
-        if (search) return { text: q ? `Type your search in ${q}` : "Type your search", description: `Enter a search term${onPage}.` };
+        const typed = quoteName(action.value, 40);
+        const enter = action.pressEnter ? " and press Enter" : "";
+        if (typed && search) return { text: `Search for “${typed}”${action.pressEnter ? "" : q ? ` in ${q}` : ""}`, description: "" };
+        if (typed) return { text: q ? `Type “${typed}” in ${q}${enter}` : `Type “${typed}”${enter}`, description: "" };
+        if (search) return { text: q ? `Type your search in ${q}${enter}` : `Type your search${enter}`, description: `Enter a search term${onPage}.` };
+        if (enter) return { text: q ? `Fill in the ${q} field and press Enter` : "Fill in the field and press Enter", description: "" };
         return { text: q ? `Fill in the ${q} field` : "Fill in the highlighted field", description: q ? `Enter the required information in the ${q} field${onPage}.` : `Enter the required information${onPage}.` };
       }
       case "select": {
@@ -116,6 +124,8 @@
   }
 
   function highlightFor(action) {
+    // The element left the page before the screenshot: don't mark a wrong spot.
+    if (action?.stale) return null;
     const rect = action?.rect;
     if (!rect || !(rect.width > 0) || !(rect.height > 0) || action.type === "navigate" || action.type === "scene") return null;
     // Ignore boxes that cover most of the page (e.g. a click on the body).
@@ -195,15 +205,43 @@
       }
       return site ? `How to ${phrase} in ${site}` : `How to ${phrase}`;
     }
-    return site ? `${site} walkthrough` : "";
+    const search = actions.find((action) => action.type === "type" && action.value && (action.role === "searchbox" || /search/i.test(action.name || "")));
+    if (search) return `How to search for ${quoteName(search.value, 40)}${site ? ` on ${site}` : ""}`;
+    const added = actions.find((action) => action.type === "type" && action.value);
+    if (added && site) return `How to add “${quoteName(added.value, 30)}” in ${site}`;
+    return site ? `How to use ${site}` : "";
   }
 
   function makeId() { return `annotation-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
 
   // Fills in steps that have no authored text yet. Steps the user already
   // wrote are left alone, so this is safe to run again.
+  // Guidde shows "Search for X" as one step, not "type" + "press Enter";
+  // a field typed in several bursts is one step too.
+  function mergeSteps(steps) {
+    const sameField = (a, b) => a && b && a.name === b.name && a.role === b.role && a.url === b.url;
+    const out = [];
+    for (const step of steps) {
+      const action = step.action;
+      const previous = out[out.length - 1];
+      const prevAction = previous?.action;
+      const untouched = (item) => !String(item.text || "").trim();
+      if (action && prevAction && prevAction.type === "type" && untouched(previous) && untouched(step)) {
+        if (action.type === "type" && sameField(prevAction, action)) { out[out.length - 1] = step; continue; }
+        if (action.type === "submit" && sameField(prevAction, action)) {
+          // Keep the screenshot that shows the typed text.
+          out[out.length - 1] = { ...previous, action: { ...prevAction, pressEnter: true } };
+          continue;
+        }
+      }
+      out.push(step);
+    }
+    return out;
+  }
+
   function build(capture) {
     if (!capture || !Array.isArray(capture.steps)) return capture;
+    capture = { ...capture, steps: mergeSteps(capture.steps) };
     let written = 0;
     let highlighted = 0;
     let scenes = 0;
@@ -231,5 +269,5 @@
     return { ...capture, title, intro, outro, steps, autoGuide: { written, highlighted, scenes, total: steps.length } };
   }
 
-  return { build, stepCopy, highlightFor, focusFor, guideTitle, siteName, pageName, formatTime, actionAnnotations, calloutBoxFor, introFor };
+  return { build, mergeSteps, stepCopy, highlightFor, focusFor, guideTitle, siteName, pageName, formatTime, actionAnnotations, calloutBoxFor, introFor };
 });

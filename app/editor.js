@@ -1,7 +1,7 @@
 const get = (id) => document.getElementById(id);
 const ui = Object.fromEntries(
   ["voice", "saveState", "title", "instructions", "open", "openProject", "file", "projectFile", "export", "download", "saveProject", "downloadGuide", "printGuide", "printDisclosure", "downloadMarkdown", "shareGuide", "shareDisclosure", "exportScorm", "scormDisclosure",
-   "status", "workspace", "count", "steps", "bulkActions", "bulkCount", "bulkMoveUp", "bulkMoveDown", "bulkDuplicate", "bulkDelete", "image", "clipStepPreview", "sceneTitle", "narration", "stepDescription", "videoAnalysisPane", "videoAnalysis", "videoAnalysisCoverage", "aiAnalyzeVideo", "charCount", "voicePace", "voiceInstructions", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationTools", "focusTools", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "captionPreview", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove", "focus", "focusZoom", "focusZoomValue", "focusReset", "focusHint", "clipLibrary", "capturedClipPreview", "insertClip", "mobileVideoFile", "importMobileVideo", "aiSetup", "aiConnectDialog", "aiConnectionInfo", "aiDisclosure", "closeAiConnect", "connectChatGPT", "connectApiKey", "disconnectChatGPT", "aiDraft", "transcribeButton", "transcribeCapture", "transcriptFile", "transcript", "transcriptHint", "captionLanguage", "translateCaptions", "downloadVtt", "downloadSrt", "captionEditorPane", "captionEditor", "addCaption", "recordedNarration", "playRecordedStep", "audioSourceControls", "audioSource", "useLocalVoice", "aiVoice", "aiVoiceover", "aiVoiceoverAll", "playAiVoice", "brandTheme", "brandAccent", "brandTitleStyle", "brandLogo", "clearBrandLogo", "autoGuideBanner", "autoGuideHeadline", "autoGuideDetail", "autoGuidePreview", "autoGuideImprove", "autoGuideDismiss", "exportMenu", "resultDownload"]
+   "status", "workspace", "count", "steps", "bulkActions", "bulkCount", "bulkMoveUp", "bulkMoveDown", "bulkDuplicate", "bulkDelete", "image", "clipStepPreview", "sceneTitle", "narration", "stepDescription", "videoAnalysisPane", "videoAnalysis", "videoAnalysisCoverage", "aiAnalyzeVideo", "charCount", "voicePace", "voiceInstructions", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationTools", "focusTools", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "captionPreview", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove", "focus", "focusZoom", "focusZoomValue", "focusReset", "focusHint", "clipLibrary", "capturedClipPreview", "insertClip", "mobileVideoFile", "importMobileVideo", "aiSetup", "aiConnectDialog", "aiConnectionInfo", "aiDisclosure", "closeAiConnect", "connectChatGPT", "connectApiKey", "disconnectChatGPT", "aiDraft", "transcribeButton", "transcribeCapture", "transcriptFile", "transcript", "transcriptHint", "captionLanguage", "translateCaptions", "downloadVtt", "downloadSrt", "captionEditorPane", "captionEditor", "addCaption", "recordedNarration", "playRecordedStep", "audioSourceControls", "audioSource", "useLocalVoice", "aiVoice", "aiVoiceover", "aiVoiceoverAll", "playAiVoice", "brandTheme", "brandAccent", "brandTitleStyle", "brandLogo", "clearBrandLogo", "autoGuideBanner", "autoGuideHeadline", "autoGuideDetail", "autoGuidePreview", "autoGuideImprove", "autoGuideDismiss", "exportMenu", "resultDownload", "playGuide", "importMenu", "playFromStep", "guideIntro", "guideOutro", "playIntro", "playOutro", "narrationVoice", "advancedPanel"]
     .map((id) => [id, get(id)]),
 );
 let guide;
@@ -66,7 +66,9 @@ function stopPreview() {
   previewAudio = undefined;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = undefined;
-  ui.preview.textContent = "Play narration";
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  for (const button of [ui.preview, ui.playIntro, ui.playOutro]) button.classList.remove("speaking");
+  ui.preview.textContent = "▶ Hear narration";
 }
 
 function cancelTools() {
@@ -127,17 +129,58 @@ function renderAnnotations() {
       object.style.transform = `rotate(${angle}deg)`;
       object.style.width = `${Math.max(annotation.width, 0.05) * 100}%`;
     } else if (annotation.type === "marker") object.textContent = annotation.text || annotation.label || "1";
-    else if (annotation.type === "click") object.style.aspectRatio = "1";
-    else if (annotation.type === "callout") object.textContent = annotation.text || annotation.label || annotation.content || "Explain this";
+    else if (annotation.type === "click") {
+      // Ring radius ≈1.8% of the image width, centred on the click point.
+      const size = Math.max(displayWidth, 0.036);
+      object.style.aspectRatio = "1"; object.style.height = "auto"; object.style.width = `${size * 100}%`;
+      object.style.left = `${(annotation.x + annotation.width / 2 - size / 2) * 100}%`;
+      object.style.top = `${(annotation.y + annotation.height / 2 - (size / 2) * frameAspect()) * 100}%`;
+    }
+    else if (annotation.type === "callout") {
+      object.style.height = "auto"; object.style.minHeight = `${displayHeight * 100}%`;
+      const number = document.createElement("span"); number.className = "callout-step"; number.textContent = String(selected + 1);
+      const text = document.createElement("span"); text.className = "callout-text"; text.textContent = annotation.text || annotation.label || annotation.content || "Explain this";
+      object.append(number, text);
+      const target = calloutTarget();
+      if (target) {
+        const box = { x: annotation.x, y: annotation.y, width: Math.max(annotation.width, displayWidth), height: displayHeight };
+        const cx = target.x + target.width / 2, cy = target.y + target.height / 2;
+        const side = target.x + target.width <= box.x ? "left" : target.x >= box.x + box.width ? "right" : cy < box.y ? "top" : cy > box.y + box.height ? "bottom" : "";
+        // Hug the text; stay anchored to the side facing the target.
+        object.style.width = "max-content"; object.style.maxWidth = `${Math.max(annotation.width, displayWidth) * 100}%`;
+        if (side === "right") { object.style.left = "auto"; object.style.right = `${(1 - box.x - box.width) * 100}%`; }
+        if (side) {
+          object.dataset.pointer = side;
+          const along = side === "left" || side === "right" ? (cy - box.y) / box.height : (cx - box.x) / box.width;
+          object.style.setProperty("--pointer-at", `${Math.max(14, Math.min(86, along * 100))}%`);
+        }
+      }
+    }
     const handle = document.createElement("span"); handle.className = "resize-handle"; handle.title = "Resize annotation"; object.append(handle);
     object.addEventListener("pointerdown", (event) => beginAnnotationDrag(event, annotation.id, event.target === handle));
     ui.annotationLayer.append(object);
+    if (annotation.type === "callout") {
+      // Keep auto-sized callouts inside the screenshot.
+      const room = ui.annotationLayer.clientHeight;
+      if (room && object.offsetTop + object.offsetHeight > room - 2) object.style.top = `${Math.max(0, room - object.offsetHeight - 2)}px`;
+    }
   }
   updateAnnotationControls();
 }
-function syncAnnotationLayer() {
-  ui.annotationLayer.style.height = `${ui.image.getBoundingClientRect().height}px`;
+// Height/width ratio of the displayed screenshot, so circles stay round.
+function frameAspect() { return ui.image.naturalHeight ? ui.image.naturalWidth / ui.image.naturalHeight : 16 / 9; }
+// What a callout points at: the highlighted element, else the click ring.
+function calloutTarget() {
+  const items = currentAnnotations();
+  return items.find((item) => item.type === "highlight") || items.find((item) => item.type === "click") || items.find((item) => item.type === "marker");
 }
+function syncAnnotationLayer() {
+  // Pin the editable layer exactly over the displayed screenshot.
+  const layer = ui.annotationLayer.style;
+  layer.left = `${ui.image.offsetLeft}px`; layer.top = `${ui.image.offsetTop}px`;
+  layer.width = `${ui.image.offsetWidth}px`; layer.height = `${ui.image.offsetHeight}px`;
+}
+window.addEventListener("resize", () => { if (guide) { syncAnnotationLayer(); renderAnnotations(); } });
 function beginAnnotationDrag(event, id, resizing) {
   event.preventDefault(); event.stopPropagation(); selectedAnnotation = id; renderAnnotations();
   const start = { x: event.clientX, y: event.clientY, annotations: snapshotAnnotations() };
@@ -263,6 +306,12 @@ function loadGuide(imported) {
   const quickStart = document.getElementById("quickStart");
   if (quickStart) quickStart.hidden = true;
   ui.workspace.hidden = false;
+  document.body.classList.add("has-guide");
+  ui.importMenu.open = false;
+  ui.playGuide.hidden = false;
+  ui.guideIntro.value = guide.intro || "";
+  ui.guideOutro.value = guide.outro || "";
+  if (ui.narrationVoice.value) guide.voice = ui.narrationVoice.value;
   ui.export.hidden = false;
   ui.saveProject.hidden = false;
   ui.downloadGuide.hidden = false;
@@ -306,7 +355,12 @@ function loadGuide(imported) {
     number.textContent = guide.steps[index].kind === "video" ? "▶" : String(index + 1).padStart(2, "0");
     label.className = "step-text";
     label.textContent = stepLabel(index);
-    button.append(number, label);
+    const thumb = document.createElement("span");
+    thumb.className = `step-thumb${step.kind === "video" ? " is-video" : ""}`;
+    thumb.setAttribute("aria-hidden", "true");
+    if (step.kind === "video") thumb.textContent = "🎬 Video clip";
+    const caption = document.createElement("span"); caption.className = "step-caption"; caption.append(number, label);
+    button.append(thumb, caption);
     button.addEventListener("click", () => select(index));
     row.append(check, button);
     ui.steps.append(row);
@@ -314,7 +368,30 @@ function loadGuide(imported) {
   syncBulkActions();
   select(0);
   persist();
+  refreshAllThumbnails();
 }
+
+// Annotated step thumbnails (spotlight, click ring, callout) for the step list.
+const thumbnailCache = new Map();
+let thumbnailTimer;
+function thumbnailKey(step) { return JSON.stringify([step.sourceImage?.length, step.sourceImage?.slice(-40), step.annotations, step.focus]); }
+async function refreshThumbnail(index) {
+  const step = guide?.steps?.[index];
+  const thumb = ui.steps.children[index]?.querySelector(".step-thumb");
+  if (!step || !thumb || step.kind === "video" || !globalThis.StepfilmPlayer) return;
+  const key = thumbnailKey(step) + index;
+  let url = thumbnailCache.get(step.id)?.key === key ? thumbnailCache.get(step.id).url : "";
+  if (!url) {
+    try {
+      const canvas = await StepfilmPlayer.renderStepCanvas(step, { width: 480, height: 270, zoomToTarget: true, maxScale: 2.4, number: index + 1, unit: 0.75 });
+      url = canvas.toDataURL("image/jpeg", 0.78);
+      thumbnailCache.set(step.id, { key, url });
+    } catch (_) { return; }
+  }
+  if (ui.steps.children[index]?.querySelector(".step-thumb") === thumb) thumb.style.backgroundImage = `url("${url}")`;
+}
+async function refreshAllThumbnails() { if (!guide) return; for (let index = 0; index < guide.steps.length; index++) await refreshThumbnail(index); }
+function scheduleThumbnail() { clearTimeout(thumbnailTimer); const index = selected; thumbnailTimer = setTimeout(() => refreshThumbnail(index), 350); }
 
 function setRecordedAudioSource(audioId) {
   const url = audioId ? `/api/narration/${audioId}` : "";
@@ -339,6 +416,9 @@ function showEmptyState() {
   const quickStart = document.getElementById("quickStart");
   if (quickStart) quickStart.hidden = false;
   ui.workspace.hidden = true;
+  document.body.classList.remove("has-guide");
+  ui.importMenu.open = true;
+  ui.playGuide.hidden = true;
   ui.export.hidden = true;
   ui.saveProject.hidden = true;
   ui.downloadGuide.hidden = true;
@@ -360,6 +440,7 @@ function persist() {
   if (!guide) return;
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(guide)); ui.saveState.textContent = "Saved locally"; }
   catch (_) { ui.saveState.textContent = "Draft loaded"; }
+  scheduleThumbnail();
 }
 
 async function renderGuidePreview() {
@@ -839,7 +920,8 @@ async function draftWithAi({ automatic = false } = {}) {
     if (!guide.titleEdited) {
       const previousIntro = globalThis.StepfilmAutoGuide ? StepfilmAutoGuide.introFor(guide.title) : "";
       guide.title = String(result.title || guide.title).slice(0, 150); guide.aiTitle = true; ui.title.textContent = guide.title;
-      if (globalThis.StepfilmAutoGuide && (!guide.intro || guide.intro === previousIntro)) guide.intro = StepfilmAutoGuide.introFor(guide.title);
+      if (!guide.intro || guide.intro === previousIntro) guide.intro = String(result.intro || (globalThis.StepfilmAutoGuide ? StepfilmAutoGuide.introFor(guide.title) : guide.intro || "")).slice(0, 300);
+      if (result.outro && (!guide.outro || guide.outro === "That's it — you've completed every step.")) guide.outro = String(result.outro).slice(0, 300);
     }
     let skipped = 0;
     let improved = 0;
@@ -890,7 +972,7 @@ ui.autoGuideImprove.addEventListener("click", async () => {
 });
 ui.resultDownload.addEventListener("click", () => ui.download.click());
 ui.autoGuideDismiss.addEventListener("click", () => { ui.autoGuideBanner.hidden = true; });
-ui.autoGuidePreview.addEventListener("click", () => ui.export.click());
+ui.autoGuidePreview.addEventListener("click", () => openPlayer(0));
 
 function showAutoGuideSummary(summary, provider) {
   if (!summary || !summary.total) { ui.autoGuideBanner.hidden = true; return; }
@@ -898,7 +980,7 @@ function showAutoGuideSummary(summary, provider) {
   ui.autoGuideHeadline.textContent = scenes && !written ? `Found ${scenes} screen change${scenes === 1 ? "" : "s"} in your recording` : `Stepfilm wrote ${written} of ${total} step${total === 1 ? "" : "s"} from your clicks`;
   const parts = [];
   if (highlighted) parts.push(`highlighted ${highlighted} clicked element${highlighted === 1 ? "" : "s"} in your guide and video, with the video zooming in on each`);
-  parts.push("narration uses the step text with local speech when you export");
+  parts.push("each step is narrated aloud — press Play guide to watch and hear it");
   let detail = `${parts.join("; ")}.`.replace(/^./, (c) => c.toUpperCase());
   if (scenes && provider !== "chatgpt" && provider !== "api_key") detail += " Screen recordings have no click details — connect ChatGPT to describe these steps automatically, or type each one.";
   else if (provider === "chatgpt") detail += " Polishing the wording with your ChatGPT plan…";
@@ -1045,87 +1127,113 @@ ui.moveDown.addEventListener("click", () => reorder(selected + 1));
 ui.duplicate.addEventListener("click", () => { guide.steps.splice(selected + 1, 0, { ...guide.steps[selected] }); loadGuide(guide); select(selected + 1); });
 ui.remove.addEventListener("click", () => { if (guide.steps.length === 1) return; guide.steps.splice(selected, 1); loadGuide(guide); select(Math.min(selected, guide.steps.length - 1)); });
 
-ui.preview.addEventListener("click", async () => {
+// Narration audio: the best local voice from the server, else the browser's own speech.
+function chosenVoice() { return ui.narrationVoice.value || ""; }
+async function narrationAudio(text, voice = chosenVoice()) {
+  const response = await api("/api/preview", voice ? { text, voice } : { text });
+  return response.blob();
+}
+async function speakLine(text, button) {
   if (previewRequest) {
+    const wasButton = previewRequest.button;
     stopPreview();
-    return;
+    if (wasButton === button) return;
   }
-  const text = ui.narration.value.trim();
-  if (!text) {
-    status("Enter narration to hear a preview.", true);
-    return;
-  }
-  const request = Symbol();
+  text = String(text || "").trim();
+  if (!text) { status("Enter narration to hear a preview.", true); return; }
+  const request = { button };
   previewRequest = request;
-  ui.preview.textContent = "Stop preview";
+  button.classList.add("speaking");
+  if (button === ui.preview) ui.preview.textContent = "■ Stop";
   try {
-    const response = await api("/api/preview", { text });
-    const audio = await response.blob();
+    const audio = await narrationAudio(text);
     if (previewRequest !== request) return;
     previewUrl = URL.createObjectURL(audio);
     previewAudio = new Audio(previewUrl);
-    previewAudio.addEventListener("ended", stopPreview, { once: true });
+    previewAudio.addEventListener("ended", () => { if (previewRequest === request) stopPreview(); }, { once: true });
     await previewAudio.play();
   } catch (error) {
     if (previewRequest !== request) return;
-    stopPreview();
-    status(error.message, true);
+    if (!("speechSynthesis" in window)) { stopPreview(); status(error.message, true); return; }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = utterance.onerror = () => { if (previewRequest === request) stopPreview(); };
+    speechSynthesis.cancel(); speechSynthesis.speak(utterance);
+    status("Playing with your browser's voice (local narration audio was unavailable).");
   }
+}
+ui.preview.addEventListener("click", () => speakLine(ui.narration.value, ui.preview));
+ui.playIntro.addEventListener("click", () => speakLine(ui.guideIntro.value || guide?.title, ui.playIntro));
+ui.playOutro.addEventListener("click", () => speakLine(ui.guideOutro.value, ui.playOutro));
+ui.guideIntro.addEventListener("input", () => { if (guide) { guide.intro = ui.guideIntro.value.slice(0, 300); persist(); clearVideo(); } });
+ui.guideOutro.addEventListener("input", () => { if (guide) { guide.outro = ui.guideOutro.value.slice(0, 300); persist(); clearVideo(); } });
+
+// Voices offered by the local server (GET /api/voices); optional.
+const VOICE_KEY = "stepfilm-voice";
+api("/api/voices").then((response) => response.json()).then((result) => {
+  const list = Array.isArray(result) ? result : Array.isArray(result?.voices) ? result.voices : [];
+  const preferred = (() => { try { return localStorage.getItem(VOICE_KEY) || ""; } catch (_) { return ""; } })();
+  const fallbackDefault = typeof result?.default === "string" ? result.default : "";
+  for (const voice of list) {
+    const id = typeof voice === "string" ? voice : String(voice?.id || voice?.name || "");
+    if (!id) continue;
+    const option = document.createElement("option"); option.value = id;
+    option.textContent = typeof voice === "string" ? voice : [voice.label || voice.name || id, voice.language || voice.locale, voice.quality].filter(Boolean).join(" · ");
+    ui.narrationVoice.append(option);
+  }
+  const pick = preferred || fallbackDefault;
+  if (pick && [...ui.narrationVoice.options].some((option) => option.value === pick)) ui.narrationVoice.value = pick;
+  if (guide && ui.narrationVoice.value) guide.voice = ui.narrationVoice.value;
+}).catch(() => {});
+ui.narrationVoice.addEventListener("change", () => {
+  try { localStorage.setItem(VOICE_KEY, ui.narrationVoice.value); } catch (_) {}
+  if (guide) { if (ui.narrationVoice.value) guide.voice = ui.narrationVoice.value; else delete guide.voice; persist(); }
+  stopPreview();
+  status(ui.narrationVoice.value ? `Narration voice: ${ui.narrationVoice.selectedOptions[0].textContent}.` : "Using the default local voice.");
 });
+
+// In-editor Guidde-style player: intro → each step → outro, narrated.
+function openPlayer(sceneIndex = 0) {
+  if (!guide || !globalThis.StepfilmPlayer) return;
+  stopPreview(); cancelTools();
+  StepfilmPlayer.open(guide, sceneIndex, {
+    speak: (text, voice) => narrationAudio(text, voice),
+    voice: chosenVoice,
+    onClose: (stepIndex) => { if (guide && Number.isInteger(stepIndex) && stepIndex !== selected && stepIndex < guide.steps.length) select(stepIndex); },
+  }).catch((error) => status(error.message, true));
+}
+ui.playGuide.addEventListener("click", () => openPlayer(0));
+ui.playFromStep.addEventListener("click", () => openPlayer(selected + 1));
 
 function loadImage(source) {
   return new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = source; });
 }
+// Bakes annotations (and always redactions) into a PNG. Uses the same
+// renderer as the editor thumbnails and the Play preview.
 async function flattenStep(step, { zoom = true } = {}) {
   const source = await loadImage(step.sourceImage || step.image);
-  const base = document.createElement("canvas"); base.width = source.naturalWidth; base.height = source.naturalHeight;
-  const baseContext = base.getContext("2d"); baseContext.drawImage(source, 0, 0);
   const scale = Math.max(1, 1280 / source.naturalWidth, 720 / source.naturalHeight);
-  const canvas = document.createElement("canvas"); canvas.width = Math.round(source.naturalWidth * scale); canvas.height = Math.round(source.naturalHeight * scale);
-  const context = canvas.getContext("2d"); context.scale(scale, scale);
+  const width = Math.round(source.naturalWidth * scale), height = Math.round(source.naturalHeight * scale);
   // Zoom is a video effect; the written guide keeps the full screenshot.
-  const focus = zoom ? StepfilmAnnotations.normalizeFocus(step.focus) : { x: 0.5, y: 0.5, scale: 1 };
-  context.save();
-  context.translate((canvas.width / scale) / 2 - focus.x * base.width * focus.scale, (canvas.height / scale) / 2 - focus.y * base.height * focus.scale);
-  context.scale(focus.scale, focus.scale);
-  context.drawImage(base, 0, 0);
-  // Spotlight: dim everything outside highlighted elements so the target
-  // stands out on light and dark pages alike.
-  const highlights = (step.annotations || []).filter((annotation) => annotation.type === "highlight").map((annotation) => StepfilmAnnotations.geometry(annotation, source.naturalWidth, source.naturalHeight));
-  if (highlights.length) {
-    context.beginPath(); context.rect(0, 0, base.width, base.height);
-    for (const box of highlights) context.rect(box.x, box.y, box.width, box.height);
-    context.fillStyle = "rgba(15,20,32,.38)"; context.fill("evenodd");
-  }
-  for (const annotation of step.annotations || []) {
-    const box = StepfilmAnnotations.geometry(annotation, source.naturalWidth, source.naturalHeight);
-    const { x, y, width, height } = box;
-    if (annotation.type === "blur") {
-      const crop = document.createElement("canvas"); crop.width = Math.max(1, Math.round(width)); crop.height = Math.max(1, Math.round(height));
-      const cropContext = crop.getContext("2d"); cropContext.filter = "blur(18px)"; cropContext.drawImage(base, x, y, width, height, 0, 0, crop.width, crop.height);
-      context.drawImage(crop, x, y, width, height); context.fillStyle = "rgba(16,24,39,.72)"; context.fillRect(x, y, width, height); context.strokeStyle = "rgba(255,173,165,.9)"; context.lineWidth = 4; context.strokeRect(x, y, width, height); continue;
-    }
-    if (annotation.type === "marker") { context.fillStyle = "#c4f48f"; context.strokeStyle = "#15200e"; context.lineWidth = 5; context.beginPath(); context.arc(x + width / 2, y + height / 2, Math.max(12, Math.min(width, height) / 2), 0, Math.PI * 2); context.fill(); context.stroke(); context.fillStyle = "#15200e"; context.font = "800 28px system-ui"; context.textAlign = "center"; context.textBaseline = "middle"; context.fillText((annotation.text || "1").slice(0, 3), x + width / 2, y + height / 2); continue; }
-    if (annotation.type === "callout") {
-      context.fillStyle = "rgba(196,244,143,.96)"; context.strokeStyle = "#15200e"; context.lineWidth = 3; context.fillRect(x, y, width, height); context.strokeRect(x, y, width, height);
-      const layout = StepfilmAnnotations.geometry(annotation, source.naturalWidth, source.naturalHeight);
-      context.fillStyle = "#15200e"; context.font = `700 ${layout.fontSize}px system-ui`; context.textAlign = "left"; context.textBaseline = "top";
-      layout.lines.forEach((value, index) => context.fillText(value, x + 12, y + 5 + index * layout.lineHeight)); continue;
-    }
-    if (annotation.type === "click") {
-      const radius = Math.max(10, source.naturalWidth * 0.018), cx = x + width / 2, cy = y + height / 2;
-      context.fillStyle = "rgba(255,255,255,.35)"; context.beginPath(); context.arc(cx, cy, radius * 1.6, 0, Math.PI * 2); context.fill();
-      context.lineWidth = Math.max(3, radius * 0.28); context.strokeStyle = "#101827"; context.beginPath(); context.arc(cx, cy, radius, 0, Math.PI * 2); context.stroke();
-      context.lineWidth = Math.max(2, radius * 0.16); context.strokeStyle = "#c4f48f"; context.stroke();
-      context.fillStyle = "#c4f48f"; context.beginPath(); context.arc(cx, cy, radius * 0.32, 0, Math.PI * 2); context.fill(); continue;
-    }
-    if (annotation.type === "arrow") { context.strokeStyle = "#c4f48f"; context.fillStyle = "#c4f48f"; context.lineWidth = 7; context.beginPath(); context.moveTo(x, y); context.lineTo(x + width, y + height); context.stroke(); const angle = Math.atan2(height, width); context.beginPath(); context.moveTo(x + width, y + height); context.lineTo(x + width - 22 * Math.cos(angle - Math.PI / 6), y + height - 22 * Math.sin(angle - Math.PI / 6)); context.lineTo(x + width - 22 * Math.cos(angle + Math.PI / 6), y + height - 22 * Math.sin(angle + Math.PI / 6)); context.closePath(); context.fill(); continue; }
-    if (annotation.type === "highlight") { const line = Math.max(3, Math.round(Math.max(source.naturalWidth, source.naturalHeight) / 400)); context.strokeStyle = "#101827"; context.lineWidth = line * 3; context.strokeRect(x - line, y - line, width + line * 2, height + line * 2); context.strokeStyle = "#c4f48f"; context.lineWidth = line * 1.4; context.strokeRect(x - line, y - line, width + line * 2, height + line * 2); }
-  }
-  context.restore();
+  const view = zoom ? StepfilmAnnotations.normalizeFocus(step.focus) : { x: 0.5, y: 0.5, scale: 1 };
+  const index = guide?.steps?.indexOf(step);
+  const canvas = await StepfilmPlayer.renderStepCanvas(step, { width, height, view, number: index >= 0 ? index + 1 : undefined });
   return canvas.toDataURL("image/png");
 }
-async function exportSteps() { const language = selectedCaptionLanguage(); return Promise.all(guide.steps.map(async (step) => step.kind === "video" ? ({ ...step, captionLanguage: language, annotations: [] }) : ({ ...step, captionLanguage: language, image: await flattenStep(step), annotations: [] }))); }
+// Documents (HTML/print/Markdown/share) get fully flattened stills. The MP4
+// export ({ forVideo: true }) gets the screenshot with ONLY redaction (blur)
+// baked into its pixels, plus the live annotations, focus, recorded action and
+// step number, so the server can animate zoom, cursor, spotlight and callouts.
+async function exportSteps({ forVideo = false } = {}) {
+  const language = selectedCaptionLanguage();
+  return Promise.all(guide.steps.map(async (step, index) => {
+    if (step.kind === "video") return { ...step, captionLanguage: language, annotations: [] };
+    if (!forVideo) return { ...step, captionLanguage: language, image: await flattenStep(step), annotations: [] };
+    const annotations = Array.isArray(step.annotations) ? step.annotations : [];
+    const { sourceImage, ...rest } = step;
+    const redacted = await flattenStep({ ...step, focus: null, annotations: annotations.filter((annotation) => annotation.type === "blur") }, { zoom: false });
+    return { ...rest, captionLanguage: language, stepNumber: index + 1, image: redacted, annotations: annotations.filter((annotation) => annotation.type !== "blur"), focus: StepfilmAnnotations.normalizeFocus(step.focus) };
+  }));
+}
 
 ui.export.addEventListener("click", async () => {
   const renderLanguage = selectedCaptionLanguage();
@@ -1140,14 +1248,18 @@ ui.export.addEventListener("click", async () => {
   ui.narration.disabled = true;
   status("Rendering video on this computer…");
   try {
-    const response = await api("/api/export", { steps: await exportSteps(), narrationAudioId: guide.narrationAudioId, brand: guide.brand, title: guide.title });
+    const response = await api("/api/export", { steps: await exportSteps({ forVideo: true }), narrationAudioId: guide.narrationAudioId, brand: guide.brand, title: guide.title, intro: guide.intro || "", outro: guide.outro || "", ...(guide.voice ? { voice: guide.voice } : {}) });
     const videoBytes = await response.arrayBuffer();
     videoUrl = URL.createObjectURL(new Blob([videoBytes], { type: "video/mp4" }));
     const name = guide.title.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 80);
     ui.download.href = videoUrl;
     ui.download.download = `${name || "tutorial"}.mp4`;
     ui.download.hidden = false;
-    ui.download.textContent = "Download MP4";
+    ui.download.textContent = "Download MP4 again";
+    // Export MP4 saves the file straight away (like Guidde's download); the
+    // preview below stays available, and "Download MP4 again" re-saves it.
+    const save = document.createElement("a");
+    save.href = videoUrl; save.download = ui.download.download; document.body.append(save); save.click(); save.remove();
     // Reuse the response blob for playback. The server intentionally streams
     // exports as a one-shot POST response and does not expose a stale
     // `/api/export/latest` file endpoint.
@@ -1170,11 +1282,10 @@ ui.export.addEventListener("click", async () => {
       ui.download.hidden = false;
     };
     ui.video.load();
-    ui.download.textContent = "Download MP4";
     await renderGuidePreview();
     ui.result.scrollIntoView({ behavior: "smooth", block: "start" });
     ui.video.play().catch(() => {});
-    status("Your video is ready. It is playing below; use Download MP4 to save it.");
+    status(`Saved ${ui.download.download} to your Downloads. A preview is playing below.`);
   } catch (error) {
     status(error.message, true);
   } finally {

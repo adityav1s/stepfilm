@@ -65,7 +65,18 @@ assert.equal(stepCopy({ type: "click", role: "button", name: "A \"quoted\" " + "
 assert.equal(highlightFor({ type: "click", rect: { x: 0, y: 0, width: 1, height: 1 } }), null, "page-sized targets are not highlighted");
 assert.ok(highlightFor({ type: "click", rect: { x: 0, y: 0, width: 1, height: 1 }, point: { x: 0.5, y: 0.5 } }).width < 0.1, "page-sized targets fall back to the click point");
 assert.deepEqual(focusFor(null), { x: 0.5, y: 0.5, scale: 1 });
-assert.equal(guideTitle([{ action: { type: "navigate", url: "https://www.github.com/x", pageTitle: "" } }]), "github.com walkthrough");
-assert.equal(guideTitle([{ action: { type: "click", role: "button", name: "Go", pageTitle: "Docs - Acme Cloud" } }]), "Acme Cloud walkthrough", "generic buttons like Go never become the title");
+assert.equal(guideTitle([{ action: { type: "navigate", url: "https://www.github.com/x", pageTitle: "" } }]), "How to use github.com");
+assert.equal(guideTitle([{ action: { type: "click", role: "button", name: "Go", pageTitle: "Docs - Acme Cloud" } }]), "How to use Acme Cloud", "generic buttons like Go never become the title");
 assert.ok(!/[<>]/.test(stepCopy({ type: "click", role: "button", name: "<img src=x onerror=alert(1)>" }).text), "markup characters are stripped from generated copy");
+const wiki = { url: "https://en.wikipedia.org/wiki/Main_Page", pageTitle: "Wikipedia, the free encyclopedia" };
+const searchCapture = build({ title: "Browser workflow", steps: [
+  { image, text: "", action: { type: "type", role: "searchbox", name: "Search Wikipedia", value: "Esp", rect: { x: .3, y: .05, width: .3, height: .04 }, ...wiki } },
+  { image, text: "", action: { type: "type", role: "searchbox", name: "Search Wikipedia", value: "Espresso", rect: { x: .3, y: .05, width: .3, height: .04 }, ...wiki } },
+  { image, text: "", action: { type: "submit", role: "searchbox", name: "Search Wikipedia", rect: { x: .3, y: .05, width: .3, height: .04 }, ...wiki } },
+  { image, text: "", action: { type: "click", role: "link", name: "History", stale: true, rect: { x: .1, y: .9, width: .05, height: .02 }, ...wiki } },
+] });
+assert.deepEqual(searchCapture.steps.map((step) => step.text), ["Search for “Espresso”", "Click the “History” link"], "type bursts + Enter merge into one search step that names what was typed");
+assert.equal(searchCapture.title, "How to search for Espresso on Wikipedia");
+assert.equal(searchCapture.steps[1].annotations, undefined, "a target that left the page before the screenshot is not marked");
+assert.equal(stepCopy({ type: "type", role: "textbox", name: "New todo", value: "Buy milk", pressEnter: true }).text, "Type “Buy milk” in “New todo” and press Enter");
 console.log("auto-guide: ok");

@@ -165,4 +165,6 @@ $("keepScreenshots").onclick = async () => {
     await chrome.tabs.create({ url: "http://127.0.0.1:8765/?capture=latest" }); window.close();
   } catch (error) { status(`${error.message || "Could not preserve the screenshot guide."} Screenshots remain in the active capture.`, true); }
 };
+chrome.storage.local.get("stepfilmIncludeTyped").then((saved) => { $("typed").checked = saved.stepfilmIncludeTyped !== false; });
+$("typed").onchange = () => chrome.storage.local.set({ stepfilmIncludeTyped: $("typed").checked });
 restore();

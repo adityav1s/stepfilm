@@ -54,5 +54,44 @@ class FfmpegIntegrationTests(unittest.TestCase):
                 self.assertTrue(base64.b64decode(step["image"].split(",", 1)[1]).startswith(b"\xff\xd8\xff"))
 
 
+
+
+
+def _pre_action_frames_test():
+    import base64 as b64
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    from auto_steps import apply_pre_action_frames
+    ffmpeg = shutil.which("ffmpeg")
+    # Without video: the re-measured box is used and the point follows it.
+    steps = [{"at": 1.0, "image": "orig", "action": {"type": "click", "rect": {"x": .1, "y": .1, "width": .1, "height": .1}, "point": {"x": .15, "y": .15},
+                                                    "shotRect": {"x": .1, "y": .5, "width": .1, "height": .1}}}]
+    assert apply_pre_action_frames(steps, None, None) == 0
+    assert steps[0]["image"] == "orig" and steps[0]["action"]["rect"]["y"] == .5 and abs(steps[0]["action"]["point"]["y"] - .55) < 1e-9 and "shotRect" not in steps[0]["action"]
+    if not ffmpeg:
+        print("pre-action frames: SKIP video part (FFmpeg unavailable)")
+        return
+    with tempfile.TemporaryDirectory() as temp:
+        video = Path(temp) / "rec.webm"
+        # White page until 2.0 s (the click), then the page turns black.
+        subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=white:s=320x240:r=30:d=2", "-f", "lavfi", "-i", "color=black:s=320x240:r=30:d=2",
+                        "-filter_complex", "[0][1]concat=n=2", "-c:v", "libvpx-vp9", str(video)], check=True, timeout=60)
+        steps = [{"at": 2.05, "image": "after-click", "action": {"type": "click", "stale": True, "rect": {"x": .1, "y": .1, "width": .1, "height": .1}, "shotRect": {"x": 0, "y": 0, "width": .1, "height": .1}}},
+                 {"at": 2.5, "image": "nav", "action": {"type": "navigate"}}]
+        assert apply_pre_action_frames(steps, ffmpeg, str(video)) == 1
+        assert steps[0]["image"].startswith("data:image/jpeg;base64,") and "stale" not in steps[0]["action"]
+        assert steps[0]["action"]["rect"]["x"] == .1, "the pointer-down box matches the pre-click frame"
+        assert steps[1]["image"] == "nav", "navigation steps keep their own screenshot"
+        frame = Path(temp) / "f.jpg"
+        frame.write_bytes(b64.b64decode(steps[0]["image"].split(",", 1)[1]))
+        mean = subprocess.run([ffmpeg, "-i", str(frame), "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"], capture_output=True, text=True).stderr
+        yavg = float(mean.split("lavfi.signalstats.YAVG=")[1].split()[0])
+        assert yavg > 200, f"frame should show the page before the click (white), got luma {yavg}"
+    print("pre-action frames: PASS (pre-click frame used, fallbacks correct)")
+
+
 if __name__ == "__main__":
+    _pre_action_frames_test()
     unittest.main()

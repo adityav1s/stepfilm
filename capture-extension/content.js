@@ -40,6 +40,44 @@
     return risky.some((value) => lower.includes(value)) ? "" : title;
   }
 
+  // Guidde-style steps say what was typed ("Search for “espresso”"), except
+  // in fields that can hold secrets. The owner can turn this off.
+  let includeTyped = true;
+  chrome.storage?.local.get("stepfilmIncludeTyped").then((saved) => { includeTyped = saved.stepfilmIncludeTyped !== false; }).catch(() => {});
+  const SENSITIVE = /pass|pwd|card|cc-|cvv|cvc|csc|ssn|social|otp|one-time|code|pin|secret|token|key|iban|account|routing|tax|dob|birth|salary|security|answer|license|passport/i;
+  function typedValue(field) {
+    if (!includeTyped || field.tagName !== "INPUT" && field.tagName !== "TEXTAREA") return "";
+    const type = (field.type || "text").toLowerCase();
+    if (!["text", "search", "url", ""].includes(type) && field.tagName === "INPUT") return "";
+    const hints = [field.name, field.id, field.getAttribute("autocomplete"), field.getAttribute("aria-label"), field.getAttribute("placeholder"), labelFor(field)].join(" ");
+    if (SENSITIVE.test(hints) || /^(cc-|current-password|new-password|one-time-code|tel|email|bday|street-address|postal-code)/.test(field.getAttribute("autocomplete") || "")) return "";
+    const value = String(field.value || "").trim();
+    if (!value || value.length > 40 || /\n/.test(value)) return "";
+    const cleaned = clean(value, 40);
+    return cleaned.includes("…") ? "" : cleaned;
+  }
+
+  // Elements behind recent actions, so the background can re-measure them
+  // after the screenshot (pages scroll or re-layout between the two).
+  const refs = new Map();
+  let nextRef = 1;
+  function remember(element) {
+    const ref = `r${nextRef++}`;
+    refs.set(ref, element);
+    if (refs.size > 40) refs.delete(refs.keys().next().value);
+    return ref;
+  }
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "stepfilm-locate") return;
+    const element = refs.get(message.ref);
+    if (!element || !element.isConnected) { sendResponse({ found: false }); return; }
+    const rect = targetRect(element);
+    const width = window.innerWidth || 1, height = window.innerHeight || 1;
+    const box = (value, size) => Math.max(0, Math.min(1, value / size));
+    const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width;
+    sendResponse({ found: visible, rect: { x: box(rect.left, width), y: box(rect.top, height), width: box(rect.width, width), height: box(rect.height, height) } });
+  });
+
   // The outermost editable element for inputs, textareas and rich editors.
   function textFieldOf(node) {
     if (!(node instanceof Element)) return null;
@@ -88,6 +126,12 @@
     for (const candidate of candidates) {
       const value = clean(candidate);
       if (value) return value.split(" ").length > 10 ? `${value.split(" ").slice(0, 10).join(" ")}…` : value;
+    }
+    // Unlabelled checkboxes/toggles in lists (e.g. a to-do item): use the row's text.
+    if (["checkbox", "radio"].includes((element.type || "").toLowerCase()) || ["checkbox", "switch"].includes(element.getAttribute("role"))) {
+      const row = element.closest("li,tr,[role=row],[role=listitem],[role=option]");
+      const text = clean(row?.innerText, 60);
+      if (text && text.split(" ").length <= 8) return text;
     }
     return "";
   }
@@ -142,6 +186,7 @@
       rect: { x: box(rect.left, width), y: box(rect.top, height), width: box(rect.width, width), height: box(rect.height, height) },
       url: safeUrl(),
       pageTitle: safeTitle(),
+      ref: remember(element),
     };
     if (event && Number.isFinite(event.clientX) && (event.clientX || event.clientY)) action.point = { x: box(event.clientX, width), y: box(event.clientY, height) };
     if (role === "checkbox" || role === "switch" || role === "radio" || role === "menuitemcheckbox") action.checked = element.checked === true || element.getAttribute("aria-checked") === "true";
@@ -156,13 +201,27 @@
   // The snapshots stay in this page and are only compared, never sent.
   const baseline = new WeakMap();
   const snapshot = (field) => (field.isContentEditable && field.tagName !== "INPUT" && field.tagName !== "TEXTAREA" ? field.innerText : field.value) || "";
+  let typingTimer;
   function flushTyping(field = textFieldOf(document.activeElement)) {
+    clearTimeout(typingTimer);
     if (!field || !baseline.has(field)) return;
     const now = snapshot(field);
     if (now === baseline.get(field)) return;
     baseline.set(field, now);
-    if (now.trim()) notify("page-action", describe(field, "type"));
+    if (!now.trim()) return;
+    const action = describe(field, "type");
+    const value = typedValue(field);
+    if (value) action.value = value;
+    notify("page-action", action);
   }
+  // A short pause in typing captures the field with its text, before an
+  // Enter press or click can navigate away.
+  document.addEventListener("input", (event) => {
+    const field = textFieldOf(event.target);
+    if (!field) return;
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => flushTyping(field), 800);
+  }, true);
   document.addEventListener("focusin", (event) => {
     const field = textFieldOf(event.target);
     if (field && !baseline.has(field)) baseline.set(field, snapshot(field));

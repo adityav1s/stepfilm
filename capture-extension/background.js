@@ -52,6 +52,18 @@ async function drain() {
       if (visible?.id !== state.captureTabId) continue;
       const image = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
       state.lastCapture = Date.now();
+      if (action?.ref) {
+        // Re-measure the element as it appears in this screenshot.
+        const where = await Promise.race([
+          chrome.tabs.sendMessage(tab.id, { type: "stepfilm-locate", ref: action.ref }).catch(() => undefined),
+          new Promise((resolve) => setTimeout(resolve, 400)),
+        ]);
+        // The server prefers a frame from the tab video taken just before the
+        // action (matching action.rect); without video it uses shotRect.
+        if (where?.found && where.rect) action.shotRect = where.rect;
+        else if (action.type !== "navigate") action.stale = true;
+        delete action.ref;
+      }
       const result = await api("/api/capture/step", { image, captureId: state.captureId, at: capturedAt, action: action || undefined });
       await chrome.storage.local.set({ stepfilmCount: result.count });
       await chrome.action.setBadgeText({ text: String(result.count) });
