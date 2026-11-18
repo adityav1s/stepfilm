@@ -48,6 +48,7 @@
     if (typeof action.checked === "boolean") clean.checked = action.checked;
     if (action.start === true) clean.start = true;
     if (action.stale === true) clean.stale = true;
+    if (action.pressEnter === true) clean.pressEnter = true;
     return { action: clean };
   }
   function normalizeGuide(input) {

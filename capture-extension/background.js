@@ -129,6 +129,44 @@ async function ensureOffscreen() {
   if (!contexts.length) await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["USER_MEDIA"], justification: "Record the active browser tab while capturing individual guide screenshots." });
 }
 
+// The whole start sequence runs here, not in the popup: Chrome closes the
+// popup as soon as the user clicks the page, which used to leave a capture
+// half-started (server waiting, no video, no click hook).
+async function beginCapture(message) {
+  const response = await fetch("http://127.0.0.1:8765/api/capture/start", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: message.title || "Browser workflow", recording: true, narration: message.microphone === true, captureMode: message.captureMode }) });
+  const started = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(started.error || "Stepfilm is not running.");
+  const captureMode = message.captureMode === "desktop" ? "desktop" : "tab";
+  try {
+    await ensureOffscreen();
+    state.captureId = started.captureId; state.captureTabId = message.captureTabId; state.captureMode = captureMode; state.active = true;
+    await chrome.storage.local.set({ stepfilmCaptureId: state.captureId, stepfilmCaptureTabId: state.captureTabId, stepfilmCaptureTabTitle: message.captureTabTitle, stepfilmCaptureMode: captureMode, stepfilmCapturing: true });
+    const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "start", streamId: message.streamId, captureId: state.captureId, microphone: message.microphone === true, captureMode });
+    if (!result?.ok) throw new Error(result?.error || "Could not start tab recording.");
+    await chrome.storage.local.set({ stepfilmRecording: true, stepfilmRecordingError: "", stepfilmMicrophoneError: "", stepfilmNarration: message.microphone === true, stepfilmRecordingStartedAt: Date.now() });
+  } catch (error) {
+    state.active = false;
+    await chrome.storage.local.set({ stepfilmCapturing: false, stepfilmRecording: false, stepfilmRecordingError: String(error?.message || error) });
+    await fetch("http://127.0.0.1:8765/api/capture/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ captureId: started.captureId }) }).catch(() => {});
+    throw error;
+  }
+  let clickHook = true;
+  if (captureMode === "tab") {
+    try { await chrome.scripting.executeScript({ target: { tabId: message.captureTabId }, files: ["content.js"] }); } catch (_) { clickHook = false; }
+    captureStartingPage(message.captureTabId).catch(() => {});
+  }
+  await chrome.action.setBadgeText({ text: "REC" });
+  await chrome.action.setBadgeBackgroundColor({ color: "#e56b6f" });
+  return { captureId: started.captureId, clickHook };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.target !== "background" || message.type !== "begin-capture") return;
+  beginCapture(message).then((result) => sendResponse({ ok: true, ...result })).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+  return true;
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target !== "background" || !["start-recording", "stop-recording", "recording-status", "capture-desktop-step"].includes(message.type)) return;
   (async () => {

@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { build, stepCopy, highlightFor, focusFor, guideTitle } = require("./app/auto-guide.js");
+const { build, mergeSteps, stepCopy, highlightFor, focusFor, guideTitle } = require("./app/auto-guide.js");
 const { normalizeGuide } = require("./app/annotation-model.js");
 
 const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -16,7 +16,8 @@ const capture = { title: "Browser workflow", steps: [
 
 const built = build(capture);
 assert.equal(built.title, "How to create a project in Acme", "title comes from the finishing button and site, skipping generic buttons like Close");
-assert.equal(built.steps[0].text, "Go to app.example.com/projects");
+assert.equal(built.steps[0].text, "Go to Acme");
+assert.equal(built.steps[0].description, "Start at app.example.com/projects.");
 assert.equal(built.steps[1].description, "On the Projects page.", "descriptions add context rather than repeating the instruction");
 assert.equal(built.steps[1].text, "Click “New project”");
 assert.equal(built.steps[2].text, "Fill in the “Project name” field");
@@ -79,4 +80,11 @@ assert.deepEqual(searchCapture.steps.map((step) => step.text), ["Search for “E
 assert.equal(searchCapture.title, "How to search for Espresso on Wikipedia");
 assert.equal(searchCapture.steps[1].annotations, undefined, "a target that left the page before the screenshot is not marked");
 assert.equal(stepCopy({ type: "type", role: "textbox", name: "New todo", value: "Buy milk", pressEnter: true }).text, "Type “Buy milk” in “New todo” and press Enter");
+const todos = mergeSteps([
+  { text: "", action: { type: "type", role: "textbox", name: "New todo", value: "Buy milk", url: "u" } },
+  { text: "", action: { type: "submit", role: "textbox", name: "New todo", url: "u" } },
+  { text: "", action: { type: "type", role: "textbox", name: "New todo", value: "Walk dog", url: "u" } },
+  { text: "", action: { type: "submit", role: "textbox", name: "New todo", url: "u" } },
+]);
+assert.deepEqual(todos.map((step) => stepCopy(step.action).text), ["Type “Buy milk” in “New todo” and press Enter", "Type “Walk dog” in “New todo” and press Enter"], "two entries in the same field stay two steps");
 console.log("auto-guide: ok");

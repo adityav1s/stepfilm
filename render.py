@@ -73,7 +73,7 @@ def best_voice(voices, override=None):
 
 def speech_text(text):
     """Small clean-ups so local TTS reads UI copy naturally."""
-    text = str(text or "").strip()
+    text = guide_motion.humanize_urls(str(text or "").strip())
     text = re.sub(r"[\"“”«»]", "", text)
     text = text.replace("→", ", then ").replace(" & ", " and ").replace("…", ".")
     text = re.sub(r"\s+[—–]\s+", ", ", text)
@@ -568,9 +568,9 @@ class Renderer:
             path, voice_length = audio[position]
             if kind in {"intro", "outro"}:
                 duration = guide_motion.card_duration(voice_length)
-                drawer = guide_frames.CardScene(kind, title, intro if kind == "intro" else outro, theme, duration,
+                drawer = guide_frames.CardScene(kind, title, guide_motion.humanize_urls(intro if kind == "intro" else outro), theme, duration,
                                                 first_image if kind == "intro" else last_image, screenshot_total)
-                scenes.append({"drawer": drawer, "duration": duration, "audio": path, "lead": 0.5, "voice": voice_length})
+                scenes.append({"drawer": drawer, "duration": duration, "audio": path, "lead": guide_motion.CARD_LEAD, "voice": voice_length})
                 continue
             step = steps[index]
             _, data = image_bytes(step["image"])

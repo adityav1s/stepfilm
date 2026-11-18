@@ -5,6 +5,7 @@ tested. Coordinates of the screenshot are normalised (0..1); frame
 coordinates are output pixels (1280x720 by default).
 """
 
+import re
 from math import ceil
 
 FPS = 30
@@ -12,17 +13,18 @@ WIDTH, HEIGHT = 1280, 720
 
 # Scene choreography (seconds from the start of a screenshot scene).
 AUDIO_LEAD = 0.35        # voice starts while the camera begins to move
-ZOOM_START, ZOOM_END = 0.0, 1.1
-CURSOR_START, CURSOR_END = 0.15, 1.15
-CLICK_AT = 1.2           # ripple begins; spotlight/ring/callout follow
+ZOOM_START, ZOOM_END = 0.0, 0.9
+CURSOR_START, CURSOR_END = 0.1, 0.95
+CLICK_AT = 1.0           # ripple begins; spotlight/ring/callout follow
 RIPPLE_LENGTH = 0.65
-SPOTLIGHT_FADE = (1.2, 1.55)
-RING_FADE = (1.25, 1.55)
-CALLOUT_FADE = (1.4, 1.8)
+SPOTLIGHT_FADE = (1.0, 1.3)
+RING_FADE = (1.05, 1.3)
+CALLOUT_FADE = (1.15, 1.5)
 BADGE_FADE = (0.0, 0.35)
-CROSSFADE = 0.35
-TAIL = 1.0               # silence held after the voice ends
-MIN_SCENE = 3.8
+CROSSFADE = 0.3
+TAIL = 0.7               # silence held after the voice ends
+MIN_SCENE = 2.8
+CARD_LEAD = 0.4           # intro/outro voice starts as the title lands
 INSET = 0.9              # zoomed-out screenshot sits as a card inside the branded frame
 
 
@@ -68,7 +70,7 @@ def frame_times(duration, fps=FPS):
 
 
 def card_duration(audio_duration):
-    return round(max(2.6, 0.5 + max(0.0, float(audio_duration or 0)) + 0.9), 3)
+    return round(max(2.4, CARD_LEAD + max(0.0, float(audio_duration or 0)) + 0.6), 3)
 
 
 # --------------------------------------------------------------------------
@@ -95,12 +97,16 @@ def target_box(step):
             if box:
                 return box
     action = step.get("action") if isinstance(step.get("action"), dict) else {}
+    if action.get("stale"):
+        return None  # screenshot was taken after the page changed; the element is not in it
     return _rect(action.get("rect"))
 
 
 def click_point(step):
     """Where the cursor clicks: action.point, else a click annotation centre, else the target centre."""
     action = step.get("action") if isinstance(step.get("action"), dict) else {}
+    if action.get("stale"):
+        action = {}
     point = action.get("point")
     if isinstance(point, dict) and "x" in point and "y" in point:
         return clamp(point.get("x")), clamp(point.get("y"))
@@ -235,9 +241,34 @@ DEFAULT_CURSOR_START = (0.5, 0.82)
 # Captions
 
 
+_URL = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,}|localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:/[^\s,;)]*)?", re.IGNORECASE)
+_PLAIN_WORDS = re.compile(r"^[a-z]+\.[a-z]+$")
+
+
+def site_name(host):
+    host = host.lower()
+    if host == "localhost" or re.fullmatch(r"[\d.]+", host):
+        return "the site"
+    labels = [label for label in host.split(".") if label != "www"]
+    if len(labels) >= 2 and len(labels[-1]) == 2 and labels[-2] in {"co", "com", "org", "net", "gov", "ac"}:
+        labels = labels[:-1]
+    name = labels[-2] if len(labels) >= 2 else labels[0]
+    return name[:1].upper() + name[1:]
+
+
+def humanize_urls(text):
+    """Never read URLs aloud: 'Go to https://en.wikipedia.org/wiki/Espresso' -> 'Go to Wikipedia'."""
+    def replace(match):
+        whole, host = match.group(0), match.group(1)
+        if "://" not in whole and "/" not in whole and ":" not in whole and _PLAIN_WORDS.match(whole) and not re.search(r"\.(com|org|net|io|dev|app|edu|gov|co)$", whole, re.I):
+            return whole  # ordinary "e.g"-like tokens or file names stay
+        return site_name(host)
+    return _URL.sub(replace, str(text or ""))
+
+
 def caption_chunks(text, audio_duration, max_words=14):
     """Split narration into caption chunks timed proportionally across the voice."""
-    words = str(text or "").split()
+    words = humanize_urls(text).split()
     if not words:
         return []
     chunks, current = [], []

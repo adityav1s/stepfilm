@@ -282,7 +282,17 @@ def measure_callout(text, max_width):
     return lines, bw, bh
 
 
-def place_callout(target, text, safe=CALLOUT_SAFE, force=False):
+def keepout_box(box):
+    """Normalised keep-out area for a target. A small target (checkbox, radio,
+    icon; width < 5% of the screenshot) usually has its label to the right, so
+    it covers its whole row out to +30% width (matches StepfilmPlayer.placeCallout)."""
+    if box and box["width"] < 0.05:
+        left = max(0.005, box["x"] - 0.01)
+        return {"x": left, "y": box["y"], "width": min(0.99, box["x"] + box["width"] + 0.3) - left, "height": box["height"]}
+    return box
+
+
+def place_callout(target, text, safe=CALLOUT_SAFE, force=False, keepout=None):
     """Place a callout bubble beside a target box (frame pixels).
 
     Tries right/left/below/above at a few wrap widths and returns the
@@ -290,8 +300,12 @@ def place_callout(target, text, safe=CALLOUT_SAFE, force=False):
     overlap the (padded) target: (side, x, y, lines, width, height). With
     force=True it always returns the least-bad option, clamped inside safe.
     """
+    tcx, tcy = (target[0] + target[2]) / 2, (target[1] + target[3]) / 2
+    if keepout is not None:
+        # The callout must clear the whole keep-out row; the pointer still aims at the target.
+        target = (min(target[0], max(keepout[0], 0)), min(target[1], keepout[1]),
+                  max(target[2], min(keepout[2], W)), max(target[3], keepout[3]))
     tx0, ty0, tx1, ty1 = target
-    tcx, tcy = (tx0 + tx1) / 2, (ty0 + ty1) / 2
     guard = (tx0 - 12, ty0 - 12, tx1 + 12, ty1 + 12)
     best, least_bad = None, None
     order = {"below": 0, "right": 1, "above": 2, "left": 3}
@@ -390,7 +404,8 @@ class ScreenshotScene:
             frame_box = M.box_to_frame(self.target, camera, self.iw, self.ih)
             inside = (frame_box[0] >= CALLOUT_SAFE[0] - 2 and frame_box[1] >= CALLOUT_SAFE[1] - 2 and
                       frame_box[2] <= CALLOUT_SAFE[2] + 2 and frame_box[3] <= CALLOUT_SAFE[3] + 2)
-            place = place_callout(frame_box, self._callout_text()) if self.action_callout else None
+            keep = M.box_to_frame(keepout_box(self.target), camera, self.iw, self.ih)
+            place = place_callout(frame_box, self._callout_text(), keepout=keep) if self.action_callout else None
             if fallback is None:
                 fallback = (focus, camera, place)
             if inside and (place is not None or not self.action_callout):
@@ -399,11 +414,12 @@ class ScreenshotScene:
         self.focus, self.final_camera, self.callout_place = fallback
         if self.action_callout and self.callout_place is None:
             frame_box = M.box_to_frame(self.target, self.final_camera, self.iw, self.ih)
-            self.callout_place = place_callout(frame_box, self._callout_text(), force=True)
+            keep = M.box_to_frame(keepout_box(self.target), self.final_camera, self.iw, self.ih)
+            self.callout_place = place_callout(frame_box, self._callout_text(), force=True, keepout=keep)
 
     def _callout_text(self):
         annotation = self.action_callout or {}
-        return (annotation.get("text") or self.step.get("text") or "").strip() or "Click here"
+        return M.humanize_urls(annotation.get("text") or self.step.get("text") or "").strip() or "Click here"
 
     # -- camera -----------------------------------------------------------
     def camera(self, t):
@@ -515,11 +531,12 @@ class ScreenshotScene:
         layer.alpha_composite(big.resize((W, H), Image.Resampling.LANCZOS))
 
     def _draw_callout(self, layer, annotation, camera, target_frame, occupied):
-        text = (annotation.get("text") or self.step.get("text") or "").strip() or "Click here"
+        text = M.humanize_urls(annotation.get("text") or self.step.get("text") or "").strip() or "Click here"
         pointer = None
         place = self.callout_place if annotation is self.action_callout else None
         if place is None and annotation.get("origin") == "action" and target_frame:
-            place = place_callout(target_frame, text, force=True)
+            keep = M.box_to_frame(keepout_box(self.target), camera, self.iw, self.ih) if self.target else None
+            place = place_callout(target_frame, text, force=True, keepout=keep)
         if place is not None:
             side, x, y, lines, bw, bh = place
             tx0, ty0, tx1, ty1 = target_frame

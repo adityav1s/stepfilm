@@ -164,10 +164,41 @@ def frame_at(ffmpeg: str, video_path: str, time: float) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii") if jpeg else ""
 
 
+def frame_before(ffmpeg: str, video_path: str, time: float, aspect=None) -> str:
+    """The last frame shown strictly before `time`, as a JPEG data URL.
+
+    Tab capture only emits a frame when the page changes, so seeking to a
+    time returns the NEXT frame (often the page after the click). Decoding a
+    short window ending at `time` and keeping the last frame gives the screen
+    the user actually saw. `aspect` (viewport width/height) crops away the
+    bars Chrome adds when the tab's shape differs from the recording's.
+    """
+    import os
+    import tempfile
+    end = max(0.0, float(time))
+    start = max(0.0, end - 4.0)
+    if end - start < 0.02:
+        return frame_at(ffmpeg, video_path, 0)
+    filters = []
+    if isinstance(aspect, (int, float)) and 0.3 < aspect < 4:
+        a = "%.6f" % aspect
+        filters.append(f"crop='if(gt(iw/ih,{a}),trunc(ih*{a}/2)*2,iw)':'if(gt(iw/ih,{a}),ih,trunc(iw/{a}/2)*2)'")
+    filters.append("scale='min(1600,iw)':-2")
+    with tempfile.TemporaryDirectory() as temp:
+        out = os.path.join(temp, "last.jpg")
+        result = _run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-ss", "%.3f" % start, "-i", video_path,
+                       "-t", "%.3f" % (end - start), "-vf", ",".join(filters), "-q:v", "3", "-update", "1", "-y", out], capture_output=False)
+        if result.returncode != 0 or not os.path.isfile(out):
+            return ""
+        with open(out, "rb") as handle:
+            jpeg = handle.read()
+    return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii") if jpeg.startswith(b"\xff\xd8\xff") else ""
+
+
 PRE_ACTION_TYPES = {"click", "submit", "select", "upload"}
 
 
-def apply_pre_action_frames(steps, ffmpeg, video_path, lead=0.12):
+def apply_pre_action_frames(steps, ffmpeg, video_path, lead=0.03):
     """Use the tab recording to show each action's page just BEFORE it happened.
 
     A screenshot taken after a click can already show the next page or a
@@ -181,9 +212,13 @@ def apply_pre_action_frames(steps, ffmpeg, video_path, lead=0.12):
         if not isinstance(action, dict):
             continue
         shot_rect = action.pop("shotRect", None)
+        if not (ffmpeg and video_path):
+            action.pop("viewport", None)
         frame = ""
         if ffmpeg and video_path and action.get("type") in PRE_ACTION_TYPES and isinstance(step.get("at"), (int, float)):
-            frame = frame_at(ffmpeg, video_path, step["at"] - lead)
+            viewport = action.pop("viewport", None)
+            aspect = viewport["w"] / viewport["h"] if isinstance(viewport, dict) and viewport.get("h") else None
+            frame = frame_before(ffmpeg, video_path, step["at"] - lead, aspect)
         if frame:
             step["image"] = frame
             action.pop("stale", None)

@@ -4,8 +4,25 @@
 // thumbnails, flattened export images and the Guidde-style Play preview.
 (function (root) {
   "use strict";
-  const ACCENT = "#c4f48f";
-  const INK = "#15200e";
+  // Brand theme: mirrors guide_frames.py Theme so the in-editor player, the
+  // thumbnails and the rendered MP4 share colours.
+  const DEFAULT_ACCENT = "#6d8eff";
+  const hexRgb = (value) => { if (!/^#[0-9a-f]{6}$/i.test(value || "")) value = DEFAULT_ACCENT; return [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16)); };
+  const mixRgb = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  const css = (rgb, alpha = 1) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
+  function themeFor(brand) {
+    brand = brand && typeof brand === "object" ? brand : {};
+    const accent = hexRgb(brand.accent);
+    const name = ["clean", "editorial", "bold"].includes(brand.theme) ? brand.theme : "clean";
+    const lum = (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) / 255;
+    const onAccent = lum > 0.62 ? [20, 24, 34] : [255, 255, 255];
+    let bgTop, bgBottom, ink, sub;
+    if (name === "bold") { bgTop = mixRgb(accent, [10, 12, 20], 0.25); bgBottom = mixRgb(accent, [10, 12, 20], 0.6); ink = [255, 255, 255]; sub = [230, 234, 245]; }
+    else if (name === "editorial") { bgTop = [246, 241, 231]; bgBottom = mixRgb([246, 241, 231], accent, 0.18); ink = [28, 26, 22]; sub = [82, 76, 66]; }
+    else { bgTop = mixRgb([244, 246, 251], accent, 0.08); bgBottom = mixRgb([228, 233, 245], accent, 0.28); ink = [16, 22, 38]; sub = [70, 80, 102]; }
+    return { name, accentRgb: accent, accent: css(accent), accentA: (alpha) => css(accent, alpha), onAccent: css(onAccent), bgTop: css(bgTop), bgBottom: css(bgBottom), ink: css(ink), sub: css(sub), bar: { clean: 5, editorial: 7, bold: 10 }[name], titleStyle: ["standard", "compact", "display"].includes(brand.titleStyle) ? brand.titleStyle : "standard" };
+  }
+  const DEFAULT_THEME = themeFor({});
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const ease = (t) => { t = clamp(t, 0, 1); return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; };
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -32,6 +49,44 @@
     if (!point) return null;
     const box = highlight ? { x: highlight.x, y: highlight.y, width: highlight.width, height: highlight.height } : { x: point.x - 0.02, y: point.y - 0.02, width: 0.04, height: 0.04 };
     return { point, box, clicks: Boolean(click) };
+  }
+
+  // Where an auto callout should sit (image fractions). Small targets such as
+  // checkboxes/radios/icons sit beside their label, so the guard covers the
+  // whole row to the right; then pick the side with room, in the export's
+  // order (below, right, above, left), never overlapping the guard.
+  function placeCallout(step, text, aspect = 16 / 10) {
+    const target = targetOf(step);
+    if (!target) return null;
+    let g = { ...target.box };
+    if (g.width < 0.05) { const left = Math.max(0.005, g.x - 0.01); g = { x: left, y: g.y, width: Math.min(0.99, g.x + g.width + 0.3) - left, height: g.height }; }
+    const gx = 0.012, gy = 0.012 * aspect;
+    const guard = { x0: g.x - gx, y0: g.y - gy, x1: g.x + g.width + gx, y1: g.y + g.height + gy };
+    const chars = String(text || "").trim().length || 10;
+    const textPx = chars * 8.4, maxPx = 330, innerMax = maxPx - 64;
+    const lines = Math.max(1, Math.ceil(textPx / innerMax));
+    const width = Math.max(0.14, Math.min(maxPx, textPx + 64) / 1280), height = Math.min(0.4, ((lines * 19 + 22) / 1280) * aspect);
+    const cx = target.point.x, cy = g.y + g.height / 2, gap = 0.018;
+    const fit = (x, y) => ({ x: clamp(x, 0.01, 0.99 - width), y: clamp(y, 0.01, 0.99 - height) });
+    const candidates = [
+      ["below", fit(cx - width * 0.25, guard.y1 + gap * aspect * 0.4), 0.99 - (guard.y1 + gap * aspect * 0.4 + height)],
+      ["right", fit(guard.x1 + gap, cy - height / 2), 0.99 - (guard.x1 + gap + width)],
+      ["above", fit(cx - width * 0.25, guard.y0 - gap * aspect * 0.4 - height), guard.y0 - gap * aspect * 0.4 - height - 0.01],
+      ["left", fit(guard.x0 - gap - width, cy - height / 2), guard.x0 - gap - width - 0.01],
+    ];
+    const overlaps = (p) => !(p.x + width <= guard.x0 || p.x >= guard.x1 || p.y + height <= guard.y0 || p.y >= guard.y1);
+    let best = null;
+    candidates.forEach(([side, pos, room], order) => {
+      if (room < 0 || overlaps(pos)) return;
+      const score = Math.min(room, 0.09) * 100 - order * 0.01;
+      if (!best || score > best.score) best = { score, side, ...pos };
+    });
+    if (!best) {
+      // Nothing fits cleanly: take the side with the most room, clamped.
+      const [side, pos] = candidates.reduce((a, b) => (b[2] > a[2] ? b : a));
+      best = { side, ...pos };
+    }
+    return { x: best.x, y: best.y, width, height, side: best.side };
   }
 
   // A camera view that zooms toward the target while keeping the callout in frame.
@@ -94,12 +149,12 @@
     return cx < bubble.x + bubble.width / 2 ? "left" : "right";
   }
 
-  function drawCallout(ctx, annotation, map, targetBox, number, unit, alpha) {
-    const fontSize = Math.max(7, 15 * unit), padX = 13 * unit, padY = 10 * unit, badge = number ? 22 * unit : 0;
+  function drawCallout(ctx, annotation, map, targetBox, number, unit, alpha, theme) {
+    const fontSize = Math.max(7, (number ? 15 : 22) * unit), padX = (number ? 13 : 20) * unit, padY = (number ? 10 : 14) * unit, badge = number ? 22 * unit : 0;
     let y = map.y(annotation.y);
-    let width = Math.max(130 * unit, annotation.width * map.sw);
+    let width = number ? Math.max(130 * unit, annotation.width * map.sw) : 400 * unit;
     ctx.save();
-    ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
+    ctx.font = `600 ${fontSize}px 'Avenir Next', Avenir, Inter, system-ui, sans-serif`;
     const extra = padX * 2 + (badge ? badge + 8 * unit : 0);
     const lines = wrapText(ctx, annotation.text || "Click here", width - extra);
     // Shrink the bubble to its text, keeping the side nearest the target fixed.
@@ -116,11 +171,11 @@
     const pop = 0.86 + 0.14 * ease(alpha);
     ctx.globalAlpha = clamp(alpha, 0, 1);
     ctx.translate(x + width / 2, y + height / 2); ctx.scale(pop, pop); ctx.translate(-(x + width / 2), -(y + height / 2));
-    ctx.beginPath(); roundRect(ctx, x, y, width, height, 10 * unit);
+    ctx.beginPath(); roundRect(ctx, x, y, width, height, 14 * unit);
     if (targetBox) {
       const side = pointerSide(bubble, targetBox);
       const tcx = targetBox.x + targetBox.width / 2, tcy = targetBox.y + targetBox.height / 2;
-      const size = 11 * unit;
+      const size = 12 * unit;
       if (side === "left" || side === "right") {
         const py = clamp(tcy, y + 12 * unit + size, y + height - 12 * unit - size); const ex = side === "left" ? x : x + width; const dir = side === "left" ? -1 : 1;
         ctx.moveTo(ex, py - size); ctx.lineTo(ex + dir * size * 1.25, py); ctx.lineTo(ex, py + size);
@@ -130,16 +185,16 @@
       }
     }
     ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = 14 * unit; ctx.shadowOffsetY = 4 * unit;
-    ctx.fillStyle = ACCENT; ctx.fill("nonzero");
-    ctx.shadowColor = "transparent"; ctx.lineWidth = Math.max(1, 1.5 * unit); ctx.strokeStyle = "rgba(21,32,14,.55)"; ctx.stroke();
+    ctx.fillStyle = theme.accent; ctx.fill("nonzero");
+    ctx.shadowColor = "transparent";
     let textX = x + padX;
     if (badge) {
       const bx = x + padX + badge / 2, by = y + padY + badge / 2;
-      ctx.beginPath(); ctx.arc(bx, by, badge / 2, 0, Math.PI * 2); ctx.fillStyle = INK; ctx.fill();
-      ctx.fillStyle = ACCENT; ctx.font = `800 ${Math.max(6, 12 * unit)}px Inter, system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(String(number), bx, by + 0.5 * unit);
+      ctx.beginPath(); ctx.arc(bx, by, badge / 2, 0, Math.PI * 2); ctx.fillStyle = theme.onAccent; ctx.fill();
+      ctx.fillStyle = theme.accent; ctx.font = `800 ${Math.max(6, 12 * unit)}px 'Avenir Next', Avenir, Inter, system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(String(number), bx, by + 0.5 * unit);
       textX += badge + 8 * unit;
     }
-    ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`; ctx.fillStyle = INK; ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.font = `600 ${fontSize}px 'Avenir Next', Avenir, Inter, system-ui, sans-serif`; ctx.fillStyle = theme.onAccent; ctx.textAlign = "left"; ctx.textBaseline = "top";
     const textTop = y + (height - lines.length * lineHeight) / 2 + fontSize * 0.12;
     lines.forEach((line, index) => ctx.fillText(line, textX, textTop + index * lineHeight));
     ctx.restore();
@@ -149,12 +204,23 @@
   function drawStep(ctx, image, step, o = {}) {
     const width = o.width || ctx.canvas.width, height = o.height || ctx.canvas.height;
     const iw = image.naturalWidth || image.width, ih = image.naturalHeight || image.height;
-    const map = viewTransform(iw, ih, width, height, o.view || FULL_VIEW);
+    const inset = clamp(o.inset || 0, 0, 0.2);
+    const frameW = width * (1 - inset * 2), frameH = height * (1 - inset * 2), offX = width * inset, offY = height * inset;
+    const inner = viewTransform(iw, ih, frameW, frameH, o.view || FULL_VIEW);
+    const map = { tx: inner.tx + offX, ty: inner.ty + offY, sw: inner.sw, sh: inner.sh, x: (fx) => inner.tx + offX + fx * inner.sw, y: (fy) => inner.ty + offY + fy * inner.sh };
     const unit = o.unit || Math.max(width, height * 16 / 9) / 1280;
     const a = (key) => (o[key] === undefined ? 1 : clamp(o[key], 0, 1));
+    const theme = o.theme || DEFAULT_THEME;
     ctx.save();
-    ctx.fillStyle = o.background || "#0b0f18"; ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(image, map.tx, map.ty, map.sw, map.sh);
+    if (o.background) ctx.fillStyle = o.background;
+    else { const g = ctx.createLinearGradient(0, 0, 0, height); g.addColorStop(0, theme.bgTop); g.addColorStop(1, theme.bgBottom); ctx.fillStyle = g; }
+    ctx.fillRect(0, 0, width, height);
+    if (inset > 0) {
+      const cx = Math.max(offX, map.tx), cy = Math.max(offY, map.ty), cw = Math.min(offX + frameW, map.tx + map.sw) - cx, ch = Math.min(offY + frameH, map.ty + map.sh) - cy;
+      ctx.save(); ctx.beginPath(); roundRect(ctx, cx, cy, cw, ch, 14 * unit);
+      ctx.shadowColor = "rgba(16,22,38,.28)"; ctx.shadowBlur = 30 * unit; ctx.shadowOffsetY = 10 * unit; ctx.fillStyle = "#fff"; ctx.fill(); ctx.shadowColor = "transparent";
+      ctx.clip(); ctx.drawImage(image, map.tx, map.ty, map.sw, map.sh); ctx.restore();
+    } else ctx.drawImage(image, map.tx, map.ty, map.sw, map.sh);
     const annotations = step.annotations || [];
     const box = (an) => ({ x: map.x(an.x), y: map.y(an.y), width: an.width * map.sw, height: an.height * map.sh });
     // Redactions are always baked in, whatever the animation state.
@@ -170,30 +236,32 @@
     if (highlights.length && a("spotlight") > 0) {
       ctx.beginPath(); ctx.rect(0, 0, width, height);
       for (const h of highlights) roundRect(ctx, h.x - pad, h.y - pad, h.width + pad * 2, h.height + pad * 2, 8 * unit);
-      ctx.fillStyle = `rgba(8,12,20,${0.55 * a("spotlight")})`; ctx.fill("evenodd");
+      ctx.fillStyle = `rgba(8,11,20,${0.41 * a("spotlight")})`; ctx.fill("evenodd");
       ctx.globalAlpha = a("spotlight");
       for (const h of highlights) {
+        ctx.beginPath(); roundRect(ctx, h.x - pad - 3 * unit, h.y - pad - 3 * unit, h.width + (pad + 3 * unit) * 2, h.height + (pad + 3 * unit) * 2, 11 * unit);
+        ctx.lineWidth = Math.max(1, 2 * unit); ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.stroke();
         ctx.beginPath(); roundRect(ctx, h.x - pad, h.y - pad, h.width + pad * 2, h.height + pad * 2, 8 * unit);
-        ctx.lineWidth = Math.max(1.5, 3 * unit); ctx.strokeStyle = ACCENT; ctx.shadowColor = "rgba(196,244,143,.7)"; ctx.shadowBlur = 12 * unit; ctx.stroke(); ctx.shadowBlur = 0;
+        ctx.lineWidth = Math.max(1.5, 4 * unit); ctx.strokeStyle = theme.accent; ctx.stroke();
       }
       ctx.globalAlpha = 1;
     }
     for (const an of annotations) {
       const b = box(an);
       if (an.type === "arrow" && a("callout") > 0) {
-        ctx.save(); ctx.globalAlpha = a("callout"); ctx.strokeStyle = ACCENT; ctx.fillStyle = ACCENT; ctx.lineWidth = Math.max(2, 6 * unit); ctx.lineCap = "round";
+        ctx.save(); ctx.globalAlpha = a("callout"); ctx.strokeStyle = theme.accent; ctx.fillStyle = theme.accent; ctx.lineWidth = Math.max(2, 6 * unit); ctx.lineCap = "round";
         const ex = b.x + b.width, ey = b.y + b.height; ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(ex, ey); ctx.stroke();
         const angle = Math.atan2(b.height, b.width), head = 20 * unit; ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - head * Math.cos(angle - Math.PI / 6), ey - head * Math.sin(angle - Math.PI / 6)); ctx.lineTo(ex - head * Math.cos(angle + Math.PI / 6), ey - head * Math.sin(angle + Math.PI / 6)); ctx.closePath(); ctx.fill(); ctx.restore();
       } else if (an.type === "marker" && a("callout") > 0) {
         ctx.save(); ctx.globalAlpha = a("callout"); const r = Math.max(9 * unit, Math.min(b.width, b.height) / 2); const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
-        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = ACCENT; ctx.fill(); ctx.lineWidth = Math.max(1.5, 3 * unit); ctx.strokeStyle = INK; ctx.stroke();
-        ctx.fillStyle = INK; ctx.font = `800 ${r}px Inter, system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText((an.text || "1").slice(0, 3), cx, cy); ctx.restore();
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = theme.accent; ctx.fill(); ctx.lineWidth = Math.max(1.5, 3 * unit); ctx.strokeStyle = "#fff"; ctx.stroke();
+        ctx.fillStyle = theme.onAccent; ctx.font = `800 ${r}px 'Avenir Next', Avenir, Inter, system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText((an.text || "1").slice(0, 3), cx, cy); ctx.restore();
       } else if (an.type === "click" && a("click") > 0) {
         const cx = b.x + b.width / 2, cy = b.y + b.height / 2, r = Math.max(7 * unit, 0.018 * map.sw);
         ctx.save(); ctx.globalAlpha = a("click");
-        ctx.beginPath(); ctx.arc(cx, cy, r * 1.55, 0, Math.PI * 2); ctx.fillStyle = "rgba(255,255,255,.28)"; ctx.fill();
-        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.lineWidth = Math.max(2, r * 0.3); ctx.strokeStyle = "#0b0f18"; ctx.stroke(); ctx.lineWidth = Math.max(1.2, r * 0.17); ctx.strokeStyle = ACCENT; ctx.stroke();
-        ctx.beginPath(); ctx.arc(cx, cy, r * 0.3, 0, Math.PI * 2); ctx.fillStyle = ACCENT; ctx.fill(); ctx.restore();
+        ctx.beginPath(); ctx.arc(cx, cy, r * 1.55, 0, Math.PI * 2); ctx.fillStyle = theme.accentA(0.27); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.lineWidth = Math.max(2, 5 * unit); ctx.strokeStyle = "#fff"; ctx.stroke(); ctx.lineWidth = Math.max(1.2, 3 * unit); ctx.strokeStyle = theme.accent; ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, r * 0.3, 0, Math.PI * 2); ctx.fillStyle = theme.accent; ctx.fill(); ctx.restore();
       }
     }
     const target = targetOf(step);
@@ -201,26 +269,26 @@
       const cx = map.x(target.point.x), cy = map.y(target.point.y), r = 0.018 * map.sw;
       for (const offset of [0, 0.25]) {
         const t = clamp((o.ripple - offset) / (1 - offset), 0, 1); if (t <= 0 || t >= 1) continue;
-        ctx.beginPath(); ctx.arc(cx, cy, r * (0.6 + 2.6 * t), 0, Math.PI * 2); ctx.lineWidth = Math.max(2, 4 * unit * (1 - t)); ctx.strokeStyle = `rgba(196,244,143,${1 - t})`; ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, (10 + 46 * t) * unit, 0, Math.PI * 2); ctx.lineWidth = Math.max(2, 4 * unit * (1 - t)); ctx.strokeStyle = theme.accentA(1 - t); ctx.stroke();
       }
     }
     if (a("callout") > 0) {
       const targetBox = target ? box(target.box) : null;
-      for (const an of annotations.filter((item) => item.type === "callout")) drawCallout(ctx, an, map, targetBox, o.number, unit, a("callout"));
+      for (const an of annotations.filter((item) => item.type === "callout")) drawCallout(ctx, an, map, targetBox, o.number, unit, a("callout"), theme);
     }
     if (o.cursor) drawCursor(ctx, map.x(o.cursor.x), map.y(o.cursor.y), 26 * unit, o.cursor.pressed);
     ctx.restore();
     return map;
   }
 
-  async function renderStepCanvas(step, { width, height, view, number, unit, zoomToTarget = false, maxScale = 1.6 } = {}) {
+  async function renderStepCanvas(step, { width, height, view, number, unit, theme, zoomToTarget = false, maxScale = 1.6 } = {}) {
     const image = await loadImage(step.sourceImage || step.image);
     const iw = image.naturalWidth, ih = image.naturalHeight;
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(width || iw); canvas.height = Math.round(height || (canvas.width * ih / iw));
     let chosen = view || FULL_VIEW;
     if (!view && zoomToTarget) { const wanted = targetView(step, iw, ih, canvas.width, canvas.height, maxScale); chosen = { ...wanted, scale: Math.min(wanted.scale, maxScale) }; }
-    drawStep(canvas.getContext("2d"), image, step, { width: canvas.width, height: canvas.height, view: chosen, number, unit });
+    drawStep(canvas.getContext("2d"), image, step, { width: canvas.width, height: canvas.height, view: chosen, number, unit, theme });
     return canvas;
   }
 
@@ -293,7 +361,7 @@
       const head = el("div", "player-head");
       this.titleNode = el("strong", "player-title", "Guide");
       this.counter = el("span", "player-counter", "");
-      const close = el("button", "player-close", "×"); close.type = "button"; close.id = "playerClose"; close.setAttribute("aria-label", "Close player");
+      const close = el("button", "player-close", "✕ Close preview"); close.type = "button"; close.id = "playerClose"; close.setAttribute("aria-label", "Close preview");
       close.addEventListener("click", () => this.close());
       const headText = el("div"); headText.append(this.titleNode, this.counter);
       head.append(headText, close);
@@ -303,7 +371,9 @@
       this.video = el("video", "player-video"); this.video.playsInline = true; this.video.hidden = true;
       this.caption = el("div", "player-caption"); this.caption.id = "playerCaption"; this.caption.setAttribute("aria-live", "polite");
       this.bigPlay = el("button", "player-bigplay", "▶"); this.bigPlay.type = "button"; this.bigPlay.setAttribute("aria-label", "Play"); this.bigPlay.addEventListener("click", () => this.play());
-      this.voiceBadge = el("span", "player-voice-badge", "");
+      this.voiceBadge = el("span", "player-voice-badge"); this.voiceBadge.id = "playerSpeaking"; this.voiceBadge.hidden = true; this.voiceBadge.setAttribute("aria-live", "polite");
+      const bars = el("span", "speaking-bars"); bars.setAttribute("aria-hidden", "true"); bars.append(el("i"), el("i"), el("i"), el("i"));
+      this.badgeTextNode = el("span", "speaking-text"); this.voiceBadge.append(bars, this.badgeTextNode);
       stage.append(this.canvas, this.video, this.caption, this.bigPlay, this.voiceBadge);
       this.progress = el("div", "player-progress"); this.progress.id = "playerProgress"; this.progress.setAttribute("aria-label", "Guide progress");
       const controls = el("div", "player-controls");
@@ -343,16 +413,34 @@
       return this.audioCache.get(key);
     }
 
+    buildScenes(guide) {
+      const scenes = [{ kind: "intro", text: (guide.intro || "").trim() || guide.title }];
+      guide.steps.forEach((step, index) => scenes.push({ kind: step.kind === "video" ? "video" : "step", step, number: index + 1, text: (step.text || "").trim() }));
+      scenes.push({ kind: "outro", text: (guide.outro || "").trim() || "That's it — you've completed every step." });
+      return scenes;
+    }
+
+    async loadMedia(guide) {
+      this.images = this.images || new Map();
+      await Promise.all(guide.steps.map(async (step) => {
+        if (step.kind === "video") return;
+        const source = step.sourceImage || step.image; const cached = this.images.get(step.id);
+        if (cached && cached.src === source) return;
+        try { this.images.set(step.id, await loadImage(source)); } catch (_) {}
+      }));
+      if (guide.brand?.logo) this.logo = await loadImage(guide.brand.logo).catch(() => undefined); else this.logo = undefined;
+    }
+
+    imageFor(step) { return step ? this.images.get(step.id) : undefined; }
+
     async open(guide, startAt = 0) {
-      this.guide = guide; this.scenes = [];
-      this.scenes.push({ kind: "intro", text: (guide.intro || "").trim() || guide.title });
-      guide.steps.forEach((step, index) => this.scenes.push({ kind: step.kind === "video" ? "video" : "step", step, number: index + 1, text: (step.text || "").trim() }));
-      this.scenes.push({ kind: "outro", text: (guide.outro || "").trim() || "That's it — you've completed every step." });
+      this.guide = guide; this.theme = themeFor(guide.brand);
+      this.scenes = this.buildScenes(guide);
       this.titleNode.textContent = guide.title;
       this.overlay.hidden = false; document.body.classList.add("player-open");
+      this.overlay.style.setProperty("--player-accent", this.theme.accent); this.overlay.style.setProperty("--player-on-accent", this.theme.onAccent);
       this.images = new Map();
-      await Promise.all(guide.steps.map(async (step) => { if (step.kind !== "video") { try { this.images.set(step, await loadImage(step.sourceImage || step.image)); } catch (_) {} } }));
-      if (guide.brand?.logo) this.logo = await loadImage(guide.brand.logo).catch(() => undefined); else this.logo = undefined;
+      await this.loadMedia(guide);
       this.renderProgress(); this.renderStrip();
       this.cursor = { x: 0.62, y: 0.86 };
       this.playing = false;
@@ -361,6 +449,31 @@
       this.lastFrame = performance.now();
       cancelAnimationFrame(this.raf); this.raf = requestAnimationFrame((now) => this.tick(now));
       this.play();
+    }
+
+    // The editor changed the guide (e.g. AI polished the wording) while the
+    // player is open: pick up new text for this and upcoming scenes.
+    async refresh(guide) {
+      if (!this.scenes || this.overlay.hidden) return;
+      await this.loadMedia(guide);
+      const scenes = this.buildScenes(guide);
+      this.guide = guide; this.theme = themeFor(guide.brand); this.titleNode.textContent = guide.title;
+      const current = this.scene;
+      if (scenes.length === this.scenes.length) {
+        scenes.forEach((scene, index) => { if (index !== this.index) this.scenes[index] = scene; });
+        // Keep the playing scene's timing; swap in the new wording if its voice has not started yet.
+        const fresh = scenes[this.index];
+        if (current && fresh.kind === current.kind) {
+          current.step = fresh.step;
+          if (!current.voice?.started && fresh.text !== current.text) { current.text = fresh.text; this.enter(this.index, this.playing); }
+        }
+      } else {
+        this.scenes = scenes; this.index = Math.min(this.index, scenes.length - 1);
+        this.renderProgress();
+        this.enter(this.index, this.playing);
+      }
+      this.renderStrip();
+      for (const next of this.scenes.slice(this.index + 1, this.index + 3)) if (next.text) this.fetchAudio(next.text).catch(() => {});
     }
 
     close() {
@@ -395,10 +508,10 @@
         item.append(b); this.strip.append(item); return { item: b, thumb };
       });
       for (const [index, scene] of this.scenes.entries()) {
-        if (scene.kind === "step" && this.images.get(scene.step)) {
+        if (scene.kind === "step" && this.imageFor(scene.step)) {
           const canvas = document.createElement("canvas"); canvas.width = 160; canvas.height = 90;
-          const image = this.images.get(scene.step);
-          drawStep(canvas.getContext("2d"), image, scene.step, { width: 160, height: 90, unit: 0.3, number: scene.number, view: targetView(scene.step, image.naturalWidth, image.naturalHeight, 160, 90, 2.4) });
+          const image = this.imageFor(scene.step);
+          drawStep(canvas.getContext("2d"), image, scene.step, { width: 160, height: 90, unit: 0.3, number: scene.number, theme: this.theme, view: targetView(scene.step, image.naturalWidth, image.naturalHeight, 160, 90, 2.4) });
           this.stripItems[index].thumb.style.backgroundImage = `url(${canvas.toDataURL("image/jpeg", 0.7)})`;
         } else if (scene.kind === "video") this.stripItems[index].thumb.textContent = "🎬";
       }
@@ -419,11 +532,13 @@
       }
       const speakText = scene.kind === "video" && scene.step.recordedAudioId ? "" : scene.text;
       this.voice = makeVoice(speakText, (text) => this.fetchAudio(text), voiceOptions);
-      this.voice.ready.then(() => { if (this.scene === scene) this.voiceBadge.textContent = this.voice.kind === "speech" ? "Browser voice" : this.voice.kind === "audio" ? (voiceOptions.src ? "Recorded voice" : "Local voice") : ""; });
+      scene.voice = this.voice;
+      this.voiceLabel = "";
+      this.voice.ready.then(() => { if (this.scene === scene) this.voiceLabel = this.voice.kind === "speech" ? "browser voice" : this.voice.kind === "audio" ? (voiceOptions.src ? "recorded voice" : (this.options.voice?.() || "local voice")) : ""; });
       // Warm up the next two scenes so narration starts without a gap.
       for (const next of this.scenes.slice(index + 1, index + 3)) if (next.text && !(next.kind === "video" && next.step.recordedAudioId)) this.fetchAudio(next.text).catch(() => {});
       if (scene.kind === "step") {
-        const image = this.images.get(scene.step);
+        const image = this.imageFor(scene.step);
         scene.view = image ? targetView(scene.step, image.naturalWidth, image.naturalHeight, 1280, 720) : FULL_VIEW;
         scene.from = { ...this.cursor };
       }
@@ -505,6 +620,8 @@
       if (this.overlay.dataset.speaking !== String(speaking)) this.overlay.dataset.speaking = String(speaking);
       this.overlay.dataset.scene = String(this.index); this.overlay.dataset.voice = this.voice?.kind || "";
       this.voiceBadge.classList.toggle("is-speaking", speaking);
+      const badgeText = speaking ? `Speaking${this.voiceLabel ? ` · ${this.voiceLabel}` : ""}` : this.voice && this.voice.started && !this.voice.ended && !this.playing ? "Narration paused" : this.voice && !this.voice.isReady && this.playing ? "Preparing narration…" : "";
+      if (this.badgeTextNode.textContent !== badgeText) { this.badgeTextNode.textContent = badgeText; this.voiceBadge.hidden = !badgeText; }
       const length = this.sceneLength();
       const fraction = this.scene.kind === "video" && Number.isFinite(this.video.duration) && this.video.duration > 0 ? this.video.currentTime / this.video.duration : clamp(this.t / length, 0, 1);
       if (this.segments[this.index]) this.segments[this.index].fill.style.width = `${fraction * 100}%`;
@@ -517,12 +634,13 @@
       const ctx = this.ctx, W = 1280, H = 720, scene = this.scene, t = this.t;
       if (scene.kind === "intro" || scene.kind === "outro") return this.drawCard(scene, t);
       if (scene.kind === "video") return;
-      const image = this.images.get(scene.step);
-      if (!image) { ctx.fillStyle = "#0b0f18"; ctx.fillRect(0, 0, W, H); return; }
+      const image = this.imageFor(scene.step);
+      if (!image) { ctx.fillStyle = this.theme.bgBottom; ctx.fillRect(0, 0, W, H); return; }
       const target = targetOf(scene.step);
       if (!target) {
         const k = ease(t / 6);
-        drawStep(ctx, image, scene.step, { width: W, height: H, view: { x: 0.5, y: 0.5, scale: lerp(1, Math.max(1.04, scene.view.scale), k) }, spotlight: ease((t - 0.3) / 0.5), callout: ease((t - 0.5) / 0.4), click: ease((t - 0.5) / 0.4), number: scene.number });
+        drawStep(ctx, image, scene.step, { theme: this.theme, width: W, height: H, inset: 0.05, view: { x: 0.5, y: 0.5, scale: lerp(1, Math.max(1.04, scene.view.scale), k) }, spotlight: ease((t - 0.3) / 0.5), callout: ease((t - 0.5) / 0.4), click: ease((t - 0.5) / 0.4) });
+        this.drawChrome(scene, t);
         return;
       }
       // 0–0.35s establishing shot, 0.35–1.25s zoom + cursor glide, click at 1.3s,
@@ -532,44 +650,75 @@
       const glide = ease((t - 0.35) / 0.95);
       const cursor = { x: lerp(scene.from.x, target.point.x, glide), y: lerp(scene.from.y, target.point.y, glide), pressed: t > 1.3 && t < 1.48 };
       drawStep(ctx, image, scene.step, {
-        width: W, height: H, view,
+        width: W, height: H, view, inset: 0.05 * (1 - zoom),
         spotlight: ease((t - 1.3) / 0.45), click: ease((t - 1.35) / 0.3), callout: ease((t - 1.5) / 0.4),
-        ripple: t > 1.3 ? (t - 1.3) / 0.75 : undefined, cursor, number: scene.number,
+        ripple: t > 1.3 ? (t - 1.3) / 0.65 : undefined, cursor, theme: this.theme,
       });
+      this.drawChrome(scene, t);
     }
 
-    drawCard(scene, t) {
-      const ctx = this.ctx, W = 1280, H = 720;
-      const gradient = ctx.createLinearGradient(0, 0, W, H); gradient.addColorStop(0, "#141b2b"); gradient.addColorStop(1, "#0b0f18");
-      ctx.fillStyle = gradient; ctx.fillRect(0, 0, W, H);
-      ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = ACCENT; ctx.beginPath(); ctx.arc(W * 0.88, H * 0.12, 260, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 0.08; ctx.beginPath(); ctx.arc(W * 0.08, H * 0.95, 200, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-      const appear = ease(t / 0.7), rise = (1 - appear) * 24;
-      ctx.save(); ctx.globalAlpha = appear; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-      let y = 250 + rise;
-      if (this.logo) { const h = 56, w = Math.min(240, this.logo.naturalWidth * h / this.logo.naturalHeight); ctx.drawImage(this.logo, 120, y - 120, w, h); }
-      if (scene.kind === "outro") {
-        ctx.beginPath(); ctx.arc(150, y - 70, 30, 0, Math.PI * 2); ctx.fillStyle = ACCENT; ctx.fill();
-        ctx.strokeStyle = INK; ctx.lineWidth = 6; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(137, y - 70); ctx.lineTo(147, y - 60); ctx.lineTo(165, y - 82); ctx.stroke();
-      } else {
-        ctx.fillStyle = ACCENT; ctx.font = "800 18px Inter, system-ui, sans-serif"; ctx.fillText(`STEP-BY-STEP GUIDE · ${this.guide.steps.length} STEPS`, 120, y - 50);
-      }
-      ctx.fillStyle = "#f4f5fb"; ctx.font = "800 56px Inter, system-ui, sans-serif";
-      const heading = scene.kind === "intro" ? this.guide.title : "You're all set";
-      const lines = wrapText(ctx, heading, W - 240).slice(0, 3);
-      lines.forEach((line, index) => ctx.fillText(line, 120, y + 30 + index * 64));
-      y += 30 + lines.length * 64 + 20;
-      ctx.fillStyle = "#b9bfce"; ctx.font = "500 26px Inter, system-ui, sans-serif";
-      const body = scene.kind === "intro" ? (this.guide.intro || "") : scene.text;
-      wrapText(ctx, body, W - 240).slice(0, 4).forEach((line, index) => ctx.fillText(line, 120, y + index * 36));
+    // Accent bar, logo and the "Step N of M" pill, as in the exported MP4.
+    drawChrome(scene, t) {
+      const ctx = this.ctx, W = 1280, theme = this.theme;
+      ctx.save();
+      ctx.fillStyle = theme.accent; ctx.fillRect(0, 0, W, theme.bar);
+      const label = `Step ${scene.number} of ${this.guide.steps.length}`;
+      ctx.font = "600 22px 'Avenir Next', Avenir, Inter, system-ui, sans-serif";
+      const pillW = 56 + ctx.measureText(label).width + 22, pillH = 52;
+      const px = 28, py = 26;
+      ctx.globalAlpha = ease(t / 0.4);
+      ctx.beginPath(); roundRect(ctx, px, py, pillW, pillH, 26); ctx.fillStyle = "rgba(12,16,26,.8)"; ctx.fill();
+      ctx.beginPath(); ctx.arc(px + 26, py + 26, 20, 0, Math.PI * 2); ctx.fillStyle = theme.accent; ctx.fill();
+      ctx.fillStyle = theme.onAccent; ctx.font = "800 22px 'Avenir Next', Avenir, Inter, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(String(scene.number), px + 26, py + 27);
+      ctx.fillStyle = "#fff"; ctx.font = "600 22px 'Avenir Next', Avenir, Inter, system-ui, sans-serif"; ctx.textAlign = "left"; ctx.fillText(label, px + 56, py + 27);
+      ctx.globalAlpha = 1;
+      if (this.logo) this.drawLogo();
       ctx.restore();
+    }
+
+    drawLogo() {
+      const ctx = this.ctx, h = 48, w = Math.min(220, this.logo.naturalWidth * h / this.logo.naturalHeight), x = 1280 - w - 28, y = 22;
+      ctx.beginPath(); roundRect(ctx, x - 10, y - 8, w + 20, h + 16, 12); ctx.fillStyle = "rgba(255,255,255,.88)"; ctx.fill();
+      ctx.drawImage(this.logo, x, y, w, h);
+    }
+
+    // Intro/outro cards laid out like guide_frames.py CardScene: centred
+    // icon, accent label pill, headline, body on the brand gradient.
+    drawCard(scene, t) {
+      const ctx = this.ctx, W = 1280, H = 720, theme = this.theme;
+      const gradient = ctx.createLinearGradient(0, 0, 0, H); gradient.addColorStop(0, theme.bgTop); gradient.addColorStop(1, theme.bgBottom);
+      ctx.fillStyle = gradient; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = theme.accent; ctx.fillRect(0, 0, W, theme.bar);
+      if (this.logo) this.drawLogo();
+      const intro = scene.kind === "intro";
+      const size = intro ? { standard: 60, compact: 46, display: 72 }[theme.titleStyle] : 52;
+      const headText = intro ? (theme.titleStyle === "compact" ? this.guide.title.toUpperCase() : this.guide.title) : (scene.text || "That's it!");
+      const bodyText = intro ? (this.guide.intro || "") : this.guide.title;
+      ctx.font = `800 ${size}px 'Avenir Next', Avenir, Inter, system-ui, sans-serif`;
+      const head = wrapText(ctx, headText, 1040).slice(0, 3); const headLine = intro ? Math.round(size * 1.18) : 64;
+      ctx.font = "500 30px 'Avenir Next', Avenir, Inter, system-ui, sans-serif";
+      const body = bodyText ? wrapText(ctx, bodyText, 940).slice(0, intro ? 3 : 2) : [];
+      const label = intro ? `VIDEO GUIDE  ·  ${this.guide.steps.length} STEPS` : "ALL DONE";
+      const blocks = [];
+      if (!intro) blocks.push({ h: 96, draw: (y) => { ctx.beginPath(); ctx.arc(W / 2, y + 48, 48, 0, Math.PI * 2); ctx.fillStyle = theme.accent; ctx.fill(); ctx.strokeStyle = theme.onAccent; ctx.lineWidth = 9; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.beginPath(); ctx.moveTo(W / 2 - 20, y + 50); ctx.lineTo(W / 2 - 5, y + 64); ctx.lineTo(W / 2 + 22, y + 34); ctx.stroke(); } });
+      blocks.push({ h: 40, draw: (y) => { ctx.font = "600 20px 'Avenir Next', Avenir, Inter, system-ui, sans-serif"; const w = ctx.measureText(label).width + 36; ctx.beginPath(); roundRect(ctx, W / 2 - w / 2, y, w, 40, 20); ctx.fillStyle = theme.accent; ctx.fill(); ctx.fillStyle = theme.onAccent; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(label, W / 2, y + 21); } });
+      blocks.push({ h: head.length * headLine + 12, draw: (y) => { ctx.font = `800 ${size}px 'Avenir Next', Avenir, Inter, system-ui, sans-serif`; ctx.fillStyle = theme.ink; ctx.textAlign = "center"; ctx.textBaseline = "middle"; head.forEach((line, i) => ctx.fillText(line, W / 2, y + i * headLine + headLine / 2 + 4)); } });
+      if (body.length) blocks.push({ h: body.length * 42 + 12, draw: (y) => { ctx.font = "500 30px 'Avenir Next', Avenir, Inter, system-ui, sans-serif"; ctx.fillStyle = theme.sub; ctx.textAlign = "center"; ctx.textBaseline = "middle"; body.forEach((line, i) => ctx.fillText(line, W / 2, y + i * 42 + 25)); } });
+      const gap = 22; let y = (H - (blocks.reduce((sum, b) => sum + b.h, 0) + gap * (blocks.length - 1))) / 2;
+      blocks.forEach((block, index) => {
+        const start = 0.1 + 0.18 * index; const p = ease((t - start) / 0.6);
+        if (p > 0) { ctx.save(); ctx.globalAlpha = p; block.draw(y + (1 - p) * 26); ctx.restore(); }
+        y += block.h + gap;
+      });
     }
   }
 
   let player;
   const api = {
-    drawStep, targetOf, targetView, viewTransform, loadImage, renderStepCanvas, makeVoice,
+    drawStep, themeFor, placeCallout, targetOf, targetView, viewTransform, loadImage, renderStepCanvas, makeVoice,
     open(guide, startAt, options) { if (!player) player = new GuidePlayer(options); else player.options = options; return player.open(guide, startAt); },
     close() { player?.close(); },
+    refresh(guide) { return player?.refresh(guide); },
     get instance() { return player; },
   };
   root.StepfilmPlayer = api;

@@ -21,7 +21,7 @@ short, long = M.scene_duration(0.8), M.scene_duration(6.0)
 assert short == M.MIN_SCENE, short  # choreography never cut short
 assert abs(long - (M.AUDIO_LEAD + 6.0 + M.TAIL)) < 1e-6, long  # scene follows the voiceover
 assert M.CLICK_AT < M.SPOTLIGHT_FADE[1] <= M.CALLOUT_FADE[1] < M.MIN_SCENE
-assert M.card_duration(3.0) > 3.0
+assert M.card_duration(3.0) > 3.0 and M.card_duration(0) <= 2.6 and M.card_duration(3.0) <= 4.1, "cards hold only narration + a beat"
 cues = M.caption_chunks("Open the billing page. Then choose the plan you want and confirm the change with the blue button at the bottom.", 6.0)
 assert len(cues) >= 2 and cues[0]["start"] == M.AUDIO_LEAD
 assert all(a["end"] <= b["start"] + 1e-6 for a, b in zip(cues, cues[1:]))
@@ -44,6 +44,8 @@ assert M.click_point(step) == (0.12, 0.21)
 assert M.final_focus(step)["scale"] == 1.6, "small targets get a zoom even when focus was left at 1x"
 assert M.click_point({"annotations": [{"type": "click", "x": 0.5, "y": 0.5, "width": 0.1, "height": 0.1}]}) == (0.55, 0.55)
 assert M.click_point({"action": {"type": "navigate"}}) is None
+stale = {"action": {"type": "click", "stale": True, "rect": {"x": 0.4, "y": 0.5, "width": 0.1, "height": 0.05}, "point": {"x": 0.45, "y": 0.52}}, "annotations": []}
+assert M.click_point(stale) is None and M.target_box(stale) is None, "stale screenshots get no zoom/click on empty space"
 
 # ---- cursor path ----------------------------------------------------------
 a, b = (0.1, 0.8), (0.7, 0.2)
@@ -113,6 +115,19 @@ assert edge.focus["scale"] > 1.0, "still zoomed toward the target"
 cside, cx_, cy_, _, cbw, cbh = edge.callout_place
 assert cx_ + cbw <= ex0 or cx_ >= ex1 or cy_ + cbh <= ey0 or cy_ >= ey1, "edge callout overlaps target"
 
+# ---- small target (checkbox): callout never covers the label to its right ----
+check_box = {"x": 0.30, "y": 0.45, "width": 0.015, "height": 0.024}
+check_step = {"text": "Check Make private", "action": {"type": "click", "rect": check_box, "point": {"x": 0.3075, "y": 0.462}},
+              "annotations": [{"type": "highlight", **check_box, "origin": "action"}, {"type": "click", "x": 0.2925, "y": 0.447, "width": 0.03, "height": 0.03, "origin": "action"},
+                              {"type": "callout", "x": 0.33, "y": 0.44, "width": 0.26, "height": 0.08, "text": "Check Make private so only your team sees it", "origin": "action"}]}
+check = F.ScreenshotScene(image, check_step, 4, 8, F.Theme({}), 3.0, [], None)
+label = M.box_to_frame({"x": 0.30, "y": 0.45, "width": 0.25, "height": 0.024}, check.final_camera, check.iw, check.ih)  # checkbox + its label row
+side, lx, ly, _, lbw, lbh = check.callout_place
+assert lx + lbw <= label[0] or lx >= label[2] or ly + lbh <= label[1] or ly >= label[3], ("callout covers the checkbox label", side, check.callout_place, label)
+assert side != "right", side
+wide = F.keepout_box({"x": 0.3, "y": 0.4, "width": 0.2, "height": 0.05})
+assert wide == {"x": 0.3, "y": 0.4, "width": 0.2, "height": 0.05}, "large targets keep their own box"
+
 # ---- voices ---------------------------------------------------------------
 listing = """Albert              en_US    # Hello! My name is Albert.
 Daniel              en_GB    # Hello! My name is Daniel.
@@ -129,6 +144,11 @@ assert best_voice(parse_say_voices(listing + "Zoe (Enhanced)      en_US    # Hel
 assert best_voice(voices, "Daniel") == "Daniel" and best_voice(voices, "Nope") == "Samantha"
 assert best_voice(parse_say_voices("Zarvox              en_US    # x\n")) is None
 assert speech_text('Click “Create project” — then save') == "Click Create project, then save"
+assert speech_text("Go to https://en.wikipedia.org/wiki/Espresso") == "Go to Wikipedia", "URLs are never read aloud"
+assert M.humanize_urls("Go to 127.0.0.1/index.html") == "Go to the site"
+assert M.humanize_urls("Open todomvc.com/examples/react now") == "Open Todomvc now"
+assert M.humanize_urls("Save report.pdf") == "Save report.pdf"
+assert "http" not in " ".join(c["text"] for c in M.caption_chunks("Go to https://example.com/a/b?c=1 to begin", 2.0))
 
 # ---- full render: intro, animated steps, outro ----------------------------
 if not shutil.which("ffmpeg"):
@@ -151,6 +171,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert sorted(calls) == sorted(["This guide shows the account page.", "Open the account", "Review the summary", "You're done."]), calls
     scenes = renderer.last_export_scenes
     assert [scene["kind"] for scene in scenes] == ["intro", "step", "step", "outro"], scenes
+    assert sum(scene["kind"] == "step" for scene in scenes) == len(steps), "every step, including the last, is rendered"
     meta = json.loads(subprocess.check_output([renderer.ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(output)], text=True))
     video = next(s for s in meta["streams"] if s["codec_type"] == "video")
     assert (video["width"], video["height"], video["r_frame_rate"]) == (1280, 720, "30/1"), video
@@ -164,4 +185,9 @@ with tempfile.TemporaryDirectory() as temp:
     accent_bar = grab(1.5).getpixel((640, 2))
     assert accent_bar[0] > 200 and accent_bar[1] < 120, ("intro card carries the brand accent", accent_bar)
     assert grab(step_start + 0.3).tobytes() != grab(step_start + 3.0).tobytes(), "screenshot scene is animated"
+    for scene in [scene for scene in scenes if scene["kind"] == "step"]:
+        frame = grab(scene["start"] + 1.6)
+        badge_dots = [frame.getpixel((x, y)) for x in range(44, 66, 3) for y in range(42, 64, 3)]
+        badge_dots += [frame.getpixel((x, y)) for x in range(M.WIDTH - 236, M.WIDTH - 214, 3) for y in range(42, 64, 3)]
+        assert any(r > 200 and g < 110 and 60 < b < 150 for r, g, b in badge_dots), ("step badge in brand accent missing", scene)
 print("guide video: PASS (timing, eased camera, cursor arc, ripple, redaction baked first, voice ranking, intro/steps/outro render)")

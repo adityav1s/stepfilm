@@ -1,7 +1,7 @@
 const get = (id) => document.getElementById(id);
 const ui = Object.fromEntries(
   ["voice", "saveState", "title", "instructions", "open", "openProject", "file", "projectFile", "export", "download", "saveProject", "downloadGuide", "printGuide", "printDisclosure", "downloadMarkdown", "shareGuide", "shareDisclosure", "exportScorm", "scormDisclosure",
-   "status", "workspace", "count", "steps", "bulkActions", "bulkCount", "bulkMoveUp", "bulkMoveDown", "bulkDuplicate", "bulkDelete", "image", "clipStepPreview", "sceneTitle", "narration", "stepDescription", "videoAnalysisPane", "videoAnalysis", "videoAnalysisCoverage", "aiAnalyzeVideo", "charCount", "voicePace", "voiceInstructions", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationTools", "focusTools", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "captionPreview", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove", "focus", "focusZoom", "focusZoomValue", "focusReset", "focusHint", "clipLibrary", "capturedClipPreview", "insertClip", "mobileVideoFile", "importMobileVideo", "aiSetup", "aiConnectDialog", "aiConnectionInfo", "aiDisclosure", "closeAiConnect", "connectChatGPT", "connectApiKey", "disconnectChatGPT", "aiDraft", "transcribeButton", "transcribeCapture", "transcriptFile", "transcript", "transcriptHint", "captionLanguage", "translateCaptions", "downloadVtt", "downloadSrt", "captionEditorPane", "captionEditor", "addCaption", "recordedNarration", "playRecordedStep", "audioSourceControls", "audioSource", "useLocalVoice", "aiVoice", "aiVoiceover", "aiVoiceoverAll", "playAiVoice", "brandTheme", "brandAccent", "brandTitleStyle", "brandLogo", "clearBrandLogo", "autoGuideBanner", "autoGuideHeadline", "autoGuideDetail", "autoGuidePreview", "autoGuideImprove", "autoGuideDismiss", "exportMenu", "resultDownload", "playGuide", "importMenu", "playFromStep", "guideIntro", "guideOutro", "playIntro", "playOutro", "narrationVoice", "advancedPanel"]
+   "status", "workspace", "count", "steps", "bulkActions", "bulkCount", "bulkMoveUp", "bulkMoveDown", "bulkDuplicate", "bulkDelete", "image", "clipStepPreview", "sceneTitle", "narration", "stepDescription", "videoAnalysisPane", "videoAnalysis", "videoAnalysisCoverage", "aiAnalyzeVideo", "charCount", "voicePace", "voiceInstructions", "preview", "redact", "marker", "callout", "highlight", "arrow", "blur", "annotationHint", "annotationLayer", "annotationTools", "focusTools", "annotationText", "annotationApply", "annotationDelete", "annotationUndo", "annotationRedo", "redactionHint", "redactionCanvas", "captionPreview", "result", "video", "playbackStatus", "guidePreview", "copyGuide", "moveUp", "moveDown", "duplicate", "remove", "focus", "focusZoom", "focusZoomValue", "focusReset", "focusHint", "clipLibrary", "capturedClipPreview", "insertClip", "mobileVideoFile", "importMobileVideo", "aiSetup", "aiConnectDialog", "aiConnectionInfo", "aiDisclosure", "closeAiConnect", "connectChatGPT", "connectApiKey", "disconnectChatGPT", "aiDraft", "transcribeButton", "transcribeCapture", "transcriptFile", "transcript", "transcriptHint", "captionLanguage", "translateCaptions", "downloadVtt", "downloadSrt", "captionEditorPane", "captionEditor", "addCaption", "recordedNarration", "playRecordedStep", "audioSourceControls", "audioSource", "useLocalVoice", "aiVoice", "aiVoiceover", "aiVoiceoverAll", "playAiVoice", "brandTheme", "brandAccent", "brandTitleStyle", "brandLogo", "clearBrandLogo", "autoGuideBanner", "autoGuideHeadline", "autoGuideDetail", "autoGuidePreview", "autoGuideImprove", "autoGuideDismiss", "exportMenu", "resultDownload", "playGuide", "importMenu", "playFromStep", "guideIntro", "guideOutro", "playIntro", "playOutro", "narrationVoice", "advancedPanel", "polishStatus", "polishBar", "polishText", "undoToast", "undoMessage", "undoAction"]
     .map((id) => [id, get(id)]),
 );
 let guide;
@@ -311,6 +311,7 @@ function loadGuide(imported) {
   ui.playGuide.hidden = false;
   ui.guideIntro.value = guide.intro || "";
   ui.guideOutro.value = guide.outro || "";
+  applyBrandToFrame();
   if (ui.narrationVoice.value) guide.voice = ui.narrationVoice.value;
   ui.export.hidden = false;
   ui.saveProject.hidden = false;
@@ -374,7 +375,35 @@ function loadGuide(imported) {
 // Annotated step thumbnails (spotlight, click ring, callout) for the step list.
 const thumbnailCache = new Map();
 let thumbnailTimer;
-function thumbnailKey(step) { return JSON.stringify([step.sourceImage?.length, step.sourceImage?.slice(-40), step.annotations, step.focus]); }
+function thumbnailKey(step) { return JSON.stringify([step.sourceImage?.length, step.sourceImage?.slice(-40), step.annotations, step.focus, guide?.brand?.accent, guide?.brand?.theme]); }
+function guideTheme() { return globalThis.StepfilmPlayer ? StepfilmPlayer.themeFor(guide?.brand) : undefined; }
+// Editor annotations use the same brand colours as the player and the MP4.
+function applyBrandToFrame() {
+  const theme = guideTheme(); if (!theme) return;
+  const frame = ui.image.closest(".frame");
+  frame.style.setProperty("--ann-accent", theme.accent); frame.style.setProperty("--ann-on-accent", theme.onAccent);
+}
+// Auto callouts (not moved by the user) are re-placed so they never sit on
+// the target or the label beside a small control.
+function placeAutoCallout(step, aspect) {
+  if (!globalThis.StepfilmPlayer || step?.kind === "video") return false;
+  const callout = (step.annotations || []).find((a) => a.type === "callout" && a.origin === "action" && a.generated === true);
+  if (!callout) return false;
+  const place = StepfilmPlayer.placeCallout(step, callout.text || step.text, aspect || 16 / 10);
+  if (!place) return false;
+  const moved = ["x", "y", "width", "height"].some((key) => Math.abs((callout[key] || 0) - place[key]) > 0.002);
+  Object.assign(callout, { x: place.x, y: place.y, width: place.width, height: place.height });
+  return moved;
+}
+async function placeAllAutoCallouts() {
+  if (!guide) return;
+  let changed = false;
+  for (const step of guide.steps) {
+    if (step.kind === "video") continue;
+    try { const image = await StepfilmPlayer.loadImage(step.sourceImage || step.image); if (placeAutoCallout(step, image.naturalWidth / image.naturalHeight)) changed = true; } catch (_) {}
+  }
+  if (changed) { renderAnnotations(); persist(); }
+}
 async function refreshThumbnail(index) {
   const step = guide?.steps?.[index];
   const thumb = ui.steps.children[index]?.querySelector(".step-thumb");
@@ -383,14 +412,14 @@ async function refreshThumbnail(index) {
   let url = thumbnailCache.get(step.id)?.key === key ? thumbnailCache.get(step.id).url : "";
   if (!url) {
     try {
-      const canvas = await StepfilmPlayer.renderStepCanvas(step, { width: 480, height: 270, zoomToTarget: true, maxScale: 2.4, number: index + 1, unit: 0.75 });
+      const canvas = await StepfilmPlayer.renderStepCanvas(step, { width: 480, height: 270, zoomToTarget: true, maxScale: 2.4, number: index + 1, unit: 0.75, theme: guideTheme() });
       url = canvas.toDataURL("image/jpeg", 0.78);
       thumbnailCache.set(step.id, { key, url });
     } catch (_) { return; }
   }
   if (ui.steps.children[index]?.querySelector(".step-thumb") === thumb) thumb.style.backgroundImage = `url("${url}")`;
 }
-async function refreshAllThumbnails() { if (!guide) return; for (let index = 0; index < guide.steps.length; index++) await refreshThumbnail(index); }
+async function refreshAllThumbnails() { if (!guide) return; await placeAllAutoCallouts(); for (let index = 0; index < guide.steps.length; index++) await refreshThumbnail(index); }
 function scheduleThumbnail() { clearTimeout(thumbnailTimer); const index = selected; thumbnailTimer = setTimeout(() => refreshThumbnail(index), 350); }
 
 function setRecordedAudioSource(audioId) {
@@ -491,6 +520,7 @@ function updateBrandSettings() {
   guide.brand.accent = ui.brandAccent.value;
   guide.brand.titleStyle = ui.brandTitleStyle.value;
   persist();
+  applyBrandToFrame(); renderAnnotations(); refreshAllThumbnails();
   if (!ui.result.hidden) renderGuidePreview().catch((error) => status(error.message, true));
 }
 ui.brandTheme.addEventListener("change", updateBrandSettings);
@@ -692,7 +722,7 @@ ui.narration.addEventListener("input", () => {
   guide.steps[selected].autoGenerated = false;
   // The step's auto callout repeats its instruction; keep them in step.
   const boundCallout = (guide.steps[selected].annotations || []).find((a) => a.type === "callout" && a.origin === "action");
-  if (boundCallout) { boundCallout.text = ui.narration.value.slice(0, 140); renderAnnotations(); }
+  if (boundCallout) { boundCallout.text = ui.narration.value.slice(0, 140); placeAutoCallout(guide.steps[selected], ui.image.naturalWidth && ui.image.naturalHeight ? ui.image.naturalWidth / ui.image.naturalHeight : undefined); renderAnnotations(); }
   const currentStep = guide.steps[selected];
   if (currentStep.captions.length) {
     currentStep.captions = [{ start: currentStep.captureStart, end: currentStep.captureEnd, text: ui.narration.value }];
@@ -914,6 +944,7 @@ async function draftWithAi({ automatic = false } = {}) {
   if (!automatic && hasAuthored && !confirm("AI drafting will replace existing title, descriptions, narration, and voiceovers. Continue?")) return false;
   ui.aiDraft.disabled = true; ui.aiDraft.textContent = "Drafting…";
   ui.autoGuideImprove.disabled = true; ui.autoGuideImprove.textContent = "Improving with AI…";
+  const stopProgress = showPolishProgress();
   try {
     const response = await api("/api/ai/draft", { title: guide.title, steps: guide.steps.map((step) => ({ ...step, image: step.sourceImage || step.image })) });
     const result = await response.json();
@@ -955,13 +986,37 @@ async function draftWithAi({ automatic = false } = {}) {
     });
     const keep = selected;
     const bannerVisible = !ui.autoGuideBanner.hidden;
+    // Swap the new wording in without moving the user: keep the selected
+    // step, page/list scroll and the focused field.
+    const before = guide.steps.map((step) => step.text);
+    const scrollY = window.scrollY, listScroll = ui.steps.scrollTop, listScrollX = ui.steps.scrollLeft;
+    const focused = document.activeElement?.id, caret = document.activeElement?.selectionStart;
     loadGuide(guide); select(Math.min(keep, guide.steps.length - 1));
+    window.scrollTo(window.scrollX, scrollY); ui.steps.scrollTop = listScroll; ui.steps.scrollLeft = listScrollX;
+    if (focused && get(focused)) { get(focused).focus({ preventScroll: true }); if (Number.isInteger(caret)) try { get(focused).setSelectionRange(caret, caret); } catch (_) {} }
+    guide.steps.forEach((step, index) => { if (before[index] !== undefined && step.text !== before[index]) ui.steps.children[index]?.classList.add("just-updated"); });
+    setTimeout(() => [...ui.steps.children].forEach((row) => row.classList.remove("just-updated")), 2600);
+    globalThis.StepfilmPlayer?.refresh?.(guide);
     ui.autoGuideBanner.hidden = !bannerVisible;
     status(`AI rewrote ${improved} step${improved === 1 ? "" : "s"} using what you clicked. Review each suggestion.${skipped ? ` ${skipped} video step${skipped === 1 ? " was" : "s were"} skipped; use Analyze this video step for clips.` : ""}`);
     ui.autoGuideDetail.textContent = `AI polished ${improved} step${improved === 1 ? "" : "s"} using your recorded clicks. Review the wording, then export.`;
     return true;
   } catch (error) { status(automatic ? `Stepfilm wrote the steps from your clicks. AI polishing was skipped: ${error.message}` : error.message, true); return false; }
-  finally { ui.aiDraft.disabled = false; ui.aiDraft.textContent = "Rewrite steps with AI"; ui.autoGuideImprove.disabled = false; ui.autoGuideImprove.textContent = "Improve wording with AI"; }
+  finally { stopProgress(); ui.aiDraft.disabled = false; ui.aiDraft.textContent = "Rewrite steps with AI"; ui.autoGuideImprove.disabled = false; ui.autoGuideImprove.textContent = "Improve wording with AI"; }
+}
+// AI polishing takes ~20–40s: show it, keep the editor and Play usable.
+function showPolishProgress() {
+  const started = Date.now(), count = guide?.steps?.filter((step) => step.kind !== "video").length || 0, expected = 30;
+  document.body.classList.add("ai-polishing");
+  ui.polishStatus.hidden = false;
+  const tick = () => {
+    const seconds = (Date.now() - started) / 1000;
+    ui.polishBar.style.width = `${Math.min(94, 100 * (1 - Math.exp(-seconds / (expected * 0.55))))}%`;
+    ui.polishText.textContent = `Polishing the wording of ${count} step${count === 1 ? "" : "s"} with AI · ${Math.round(seconds)}s — keep editing or press Play; new wording drops in when it's ready.`;
+  };
+  tick();
+  const timer = setInterval(tick, 500);
+  return () => { clearInterval(timer); ui.polishBar.style.width = "100%"; document.body.classList.remove("ai-polishing"); setTimeout(() => { ui.polishStatus.hidden = true; }, 600); };
 }
 ui.aiDraft.addEventListener("click", () => draftWithAi());
 ui.autoGuideImprove.addEventListener("click", async () => {
@@ -1111,7 +1166,9 @@ ui.bulkDelete.addEventListener("click", () => {
   if (selectedStepIds.size >= guide.steps.length) { status("Keep at least one step in the guide.", true); return; }
   const oldSelected = selected;
   const selectedCurrentId = guide.steps[selected]?.id;
+  const snapshot = snapshotSteps();
   const result = StepfilmStepSelection.deleteSelected(guide.steps, [...selectedStepIds]);
+  setTimeout(() => offerUndo(`${result.deletedCount} step${result.deletedCount === 1 ? "" : "s"} deleted.`, () => restoreSteps(snapshot, "Deleted steps restored.")), 0);
   const targetId = selectedStepIds.has(selectedCurrentId) ? result.steps[Math.min(oldSelected, result.steps.length - 1)]?.id : selectedCurrentId;
   applyBulkSteps(result.steps, [], targetId, `Deleted ${result.deletedCount} selected step${result.deletedCount === 1 ? "" : "s"}.`);
 });
@@ -1125,7 +1182,25 @@ function reorder(nextIndex) {
 ui.moveUp.addEventListener("click", () => reorder(selected - 1));
 ui.moveDown.addEventListener("click", () => reorder(selected + 1));
 ui.duplicate.addEventListener("click", () => { guide.steps.splice(selected + 1, 0, { ...guide.steps[selected] }); loadGuide(guide); select(selected + 1); });
-ui.remove.addEventListener("click", () => { if (guide.steps.length === 1) return; guide.steps.splice(selected, 1); loadGuide(guide); select(Math.min(selected, guide.steps.length - 1)); });
+// Deleting is instant but undoable for 8 seconds (Guidde-style toast).
+let undoTimer;
+function offerUndo(message, restore) {
+  clearTimeout(undoTimer);
+  ui.undoMessage.textContent = message; ui.undoToast.hidden = false;
+  ui.undoAction.onclick = () => { clearTimeout(undoTimer); ui.undoToast.hidden = true; restore(); };
+  undoTimer = setTimeout(() => { ui.undoToast.hidden = true; }, 8000);
+}
+function snapshotSteps() { return { steps: guide.steps.slice(), selected, selectedIds: [...selectedStepIds] }; }
+function restoreSteps(snapshot, message) {
+  guide.steps = snapshot.steps; selectedStepIds = new Set(snapshot.selectedIds);
+  loadGuide(guide); select(Math.min(snapshot.selected, guide.steps.length - 1)); status(message);
+}
+ui.remove.addEventListener("click", () => {
+  if (guide.steps.length === 1) return;
+  const snapshot = snapshotSteps(), number = selected + 1;
+  guide.steps.splice(selected, 1); loadGuide(guide); select(Math.min(snapshot.selected, guide.steps.length - 1));
+  offerUndo(`Step ${number} deleted.`, () => restoreSteps(snapshot, `Step ${number} restored.`));
+});
 
 // Narration audio: the best local voice from the server, else the browser's own speech.
 function chosenVoice() { return ui.narrationVoice.value || ""; }
@@ -1216,7 +1291,7 @@ async function flattenStep(step, { zoom = true } = {}) {
   // Zoom is a video effect; the written guide keeps the full screenshot.
   const view = zoom ? StepfilmAnnotations.normalizeFocus(step.focus) : { x: 0.5, y: 0.5, scale: 1 };
   const index = guide?.steps?.indexOf(step);
-  const canvas = await StepfilmPlayer.renderStepCanvas(step, { width, height, view, number: index >= 0 ? index + 1 : undefined });
+  const canvas = await StepfilmPlayer.renderStepCanvas(step, { width, height, view, number: index >= 0 ? index + 1 : undefined, theme: guideTheme() });
   return canvas.toDataURL("image/png");
 }
 // Documents (HTML/print/Markdown/share) get fully flattened stills. The MP4

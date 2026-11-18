@@ -163,13 +163,22 @@
   // A tiny checkbox or radio is easier to spot with its label included.
   function targetRect(element) {
     const rect = element.getBoundingClientRect();
-    const label = element.labels?.[0];
-    if (!label || !["checkbox", "radio"].includes((element.type || "").toLowerCase())) return rect;
+    const isToggle = ["checkbox", "radio"].includes((element.type || "").toLowerCase()) || ["checkbox", "switch", "radio"].includes(element.getAttribute("role"));
+    let label = element.labels?.[0];
+    // Unlabelled toggles in a list row (e.g. a to-do): the row's text is
+    // what the step is about, so highlight the row and keep callouts off it.
+    if (!label && isToggle) {
+      const row = element.closest("li,tr,[role=row],[role=listitem]");
+      const box = row?.getBoundingClientRect();
+      if (box && box.height < 90 && box.width < window.innerWidth * 0.95) label = row;
+    }
+    if (!label || !isToggle) return rect;
     const other = label.getBoundingClientRect();
     if (!other.width || !other.height || Math.abs(other.top - rect.top) > 80) return rect;
     const left = Math.min(rect.left, other.left);
     const top = Math.min(rect.top, other.top);
-    return { left, top, width: Math.max(rect.right, other.right) - left, height: Math.max(rect.bottom, other.bottom) - top };
+    const right = Math.max(rect.right, other.right), bottom = Math.max(rect.bottom, other.bottom);
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
   }
 
   function describe(element, type, event) {
@@ -187,6 +196,7 @@
       url: safeUrl(),
       pageTitle: safeTitle(),
       ref: remember(element),
+      viewport: { w: width, h: height },
     };
     if (event && Number.isFinite(event.clientX) && (event.clientX || event.clientY)) action.point = { x: box(event.clientX, width), y: box(event.clientY, height) };
     if (role === "checkbox" || role === "switch" || role === "radio" || role === "menuitemcheckbox") action.checked = element.checked === true || element.getAttribute("aria-checked") === "true";

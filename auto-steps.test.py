@@ -78,7 +78,7 @@ def _pre_action_frames_test():
         # White page until 2.0 s (the click), then the page turns black.
         subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=white:s=320x240:r=30:d=2", "-f", "lavfi", "-i", "color=black:s=320x240:r=30:d=2",
                         "-filter_complex", "[0][1]concat=n=2", "-c:v", "libvpx-vp9", str(video)], check=True, timeout=60)
-        steps = [{"at": 2.05, "image": "after-click", "action": {"type": "click", "stale": True, "rect": {"x": .1, "y": .1, "width": .1, "height": .1}, "shotRect": {"x": 0, "y": 0, "width": .1, "height": .1}}},
+        steps = [{"at": 2.02, "image": "after-click", "action": {"type": "click", "stale": True, "rect": {"x": .1, "y": .1, "width": .1, "height": .1}, "shotRect": {"x": 0, "y": 0, "width": .1, "height": .1}}},
                  {"at": 2.5, "image": "nav", "action": {"type": "navigate"}}]
         assert apply_pre_action_frames(steps, ffmpeg, str(video)) == 1
         assert steps[0]["image"].startswith("data:image/jpeg;base64,") and "stale" not in steps[0]["action"]

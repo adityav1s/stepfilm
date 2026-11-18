@@ -74,7 +74,9 @@
     switch (action?.type) {
       case "navigate": {
         const where = placeOf(action.url);
-        if (action.start) return { text: `Go to ${where || page || "the starting page"}`, description: page ? `Start on the ${page} page.` : "" };
+        // Narration shouldn't read paths aloud; the address goes in the description.
+        const site = siteName(action);
+        if (action.start) return { text: `Go to ${site || where || page || "the starting page"}`, description: where ? `Start at ${where}.` : (page ? `Start on the ${page} page.` : "") };
         return { text: page ? `The ${page} page opens` : "The next page opens", description: "" };
       }
       case "type": {
@@ -227,7 +229,8 @@
       const prevAction = previous?.action;
       const untouched = (item) => !String(item.text || "").trim();
       if (action && prevAction && prevAction.type === "type" && untouched(previous) && untouched(step)) {
-        if (action.type === "type" && sameField(prevAction, action)) { out[out.length - 1] = step; continue; }
+        // A new entry after Enter (e.g. a second to-do) is its own step.
+        if (action.type === "type" && sameField(prevAction, action) && !prevAction.pressEnter) { out[out.length - 1] = step; continue; }
         if (action.type === "submit" && sameField(prevAction, action)) {
           // Keep the screenshot that shows the typed text.
           out[out.length - 1] = { ...previous, action: { ...prevAction, pressEnter: true } };

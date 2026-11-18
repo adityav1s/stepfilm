@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import threading
 import time
 from urllib.parse import urlencode
 import urllib.error
@@ -196,7 +197,14 @@ class ChatGPTPlan:
         if not pending or pending.get("expires_at", 0) < time.time() or not secrets.compare_digest(str(state), pending["state"]):
             raise ValueError("ChatGPT sign-in expired or could not be verified. Start again.")
 
+    _refresh_lock = threading.Lock()
+
     def access_token(self):
+        # Several AI calls can run at once; refresh the token only once.
+        with self._refresh_lock:
+            return self._access_token()
+
+    def _access_token(self):
         credentials = self.credentials
         if not credentials:
             raise RuntimeError("Continue with ChatGPT to use your eligible plan allowance.")
